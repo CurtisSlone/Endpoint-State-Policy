@@ -1,0 +1,35 @@
+.ssh/
+Cargo.lock
+target/
+# Never commit secrets
+.env
+*.env
+!.env.example
+
+# Ignore local config overrides
+config/local.toml
+# =============================================================================
+# Security: Never commit secrets or local environment files
+# =============================================================================
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+!.env.example
+
+# Local configuration overrides
+config/local.toml
+config/secrets.toml
+dist/
+
+# IDE and editor files that might contain secrets
+.vscode/settings.json.local
+.idea/workspace.xml
+
+# Temporary files that might contain secrets
+*.tmp
+*.temp
+.DS_Store

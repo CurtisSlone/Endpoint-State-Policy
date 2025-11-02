@@ -1,0 +1,312 @@
+//! # File System Data Collector
+
+use crate::api::*;
+use std::fs;
+use std::path::Path;
+
+/// Collector for file system data
+pub struct FileSystemCollector {
+    id: String,
+}
+
+impl FileSystemCollector {
+    pub fn new() -> Self {
+        Self {
+            id: "filesystem_collector".to_string(),
+        }
+    }
+
+    /// Extract path from object, handling VAR resolution
+    fn extract_path(&self, object: &ExecutableObject) -> Result<String, CollectionError> {
+        use crate::types::execution_context::ExecutableObjectElement;
+
+        for element in &object.elements {
+            if let ExecutableObjectElement::Field { name, value, .. } = element {
+                if name == "path" {
+                    // Extract the actual string value
+                    match value {
+                        ResolvedValue::String(s) => return Ok(s.clone()),
+                        _ => {
+                            return Err(CollectionError::InvalidObjectConfiguration {
+                                object_id: object.identifier.clone(),
+                                reason: format!("'path' field must be a string, got {:?}", value),
+                            })
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(CollectionError::InvalidObjectConfiguration {
+            object_id: object.identifier.clone(),
+            reason: "Missing required 'path' field".to_string(),
+        })
+    }
+
+    /// Collect metadata via stat() - fast operation
+    fn collect_metadata(
+        &self,
+        path: &str,
+        object_id: &str,
+    ) -> Result<CollectedData, CollectionError> {
+        let mut data = CollectedData::new(
+            object_id.to_string(),
+            "file_metadata".to_string(),
+            self.id.clone(),
+        );
+
+        let path_obj = Path::new(path);
+
+        // Check existence first
+        let exists = path_obj.exists();
+        data.add_field("exists".to_string(), ResolvedValue::Boolean(exists));
+
+        if !exists {
+            // Early return - file doesn't exist
+            data.add_field(
+                "file_mode".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+            data.add_field(
+                "file_owner".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+            data.add_field(
+                "file_group".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+            data.add_field("readable".to_string(), ResolvedValue::Boolean(false));
+            data.add_field("file_size".to_string(), ResolvedValue::Integer(0));
+            return Ok(data);
+        }
+
+        // Get metadata
+        let metadata = fs::metadata(path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                CollectionError::AccessDenied {
+                    object_id: object_id.to_string(),
+                    reason: format!("Permission denied: {}", e),
+                }
+            } else {
+                CollectionError::CollectionFailed {
+                    object_id: object_id.to_string(),
+                    reason: format!("Failed to get metadata: {}", e),
+                }
+            }
+        })?;
+
+        // File size
+        let size = metadata.len() as i64;
+        data.add_field("file_size".to_string(), ResolvedValue::Integer(size));
+
+        // Readable check
+        let readable = fs::File::open(path).is_ok();
+        data.add_field("readable".to_string(), ResolvedValue::Boolean(readable));
+
+        // Platform-specific metadata
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+            // Permissions in octal format
+            let mode = metadata.permissions().mode();
+            let permissions = format!("{:04o}", mode & 0o7777);
+            data.add_field("file_mode".to_string(), ResolvedValue::String(permissions));
+
+            // Owner UID
+            let uid = metadata.uid();
+            data.add_field(
+                "file_owner".to_string(),
+                ResolvedValue::String(uid.to_string()),
+            );
+
+            // Group GID
+            let gid = metadata.gid();
+            data.add_field(
+                "file_group".to_string(),
+                ResolvedValue::String(gid.to_string()),
+            );
+        }
+
+        #[cfg(not(unix))]
+        {
+            // Non-Unix platforms - provide empty values
+            data.add_field(
+                "file_mode".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+            data.add_field(
+                "file_owner".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+            data.add_field(
+                "file_group".to_string(),
+                ResolvedValue::String("".to_string()),
+            );
+        }
+
+        Ok(data)
+    }
+
+    /// Collect file content - expensive operation
+    fn collect_content(
+        &self,
+        path: &str,
+        object_id: &str,
+    ) -> Result<CollectedData, CollectionError> {
+        let mut data = CollectedData::new(
+            object_id.to_string(),
+            "file_content".to_string(),
+            self.id.clone(),
+        );
+
+        let path_obj = Path::new(path);
+
+        // Check existence
+        if !path_obj.exists() {
+            return Err(CollectionError::ObjectNotFound {
+                object_id: object_id.to_string(),
+            });
+        }
+
+        // Read file content
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                // Not UTF-8 - treat as binary
+                return Err(CollectionError::CollectionFailed {
+                    object_id: object_id.to_string(),
+                    reason: "File is not valid UTF-8 (binary file)".to_string(),
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                return Err(CollectionError::AccessDenied {
+                    object_id: object_id.to_string(),
+                    reason: format!("Cannot read file: {}", e),
+                });
+            }
+            Err(e) => {
+                return Err(CollectionError::CollectionFailed {
+                    object_id: object_id.to_string(),
+                    reason: format!("Failed to read file: {}", e),
+                });
+            }
+        };
+
+        data.add_field("file_content".to_string(), ResolvedValue::String(content));
+
+        Ok(data)
+    }
+
+     /// Collect JSON file as RecordData
+    fn collect_json_record(
+        &self,
+        path: &str,
+        object_id: &str,
+    ) -> Result<CollectedData, CollectionError> {
+        use crate::types::common::RecordData;
+        
+        let mut data = CollectedData::new(
+            object_id.to_string(),
+            "json_record".to_string(),
+            self.id.clone(),
+        );
+
+        let path_obj = Path::new(path);
+
+        // Check existence
+        if !path_obj.exists() {
+            return Err(CollectionError::ObjectNotFound {
+                object_id: object_id.to_string(),
+            });
+        }
+
+        // Read file content
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(CollectionError::CollectionFailed {
+                    object_id: object_id.to_string(),
+                    reason: format!("Failed to read file: {}", e),
+                });
+            }
+        };
+
+        // Parse JSON
+        let record_data = RecordData::from_json_str(&content).map_err(|e| {
+            CollectionError::CollectionFailed {
+                object_id: object_id.to_string(),
+                reason: format!("Failed to parse JSON: {}", e),
+            }
+        })?;
+
+        // Store as RecordData
+        data.add_field("json_data".to_string(), ResolvedValue::RecordData(record_data));
+
+        Ok(data)
+    }
+}
+
+impl CtnDataCollector for FileSystemCollector {
+    fn collect_for_ctn_with_hints(
+    &self,
+    object: &ExecutableObject,
+    contract: &CtnContract,
+    hints: &BehaviorHints,
+) -> Result<CollectedData, CollectionError> {
+    let path = self.extract_path(object)?;
+
+    match contract.collection_strategy.collection_mode {
+        CollectionMode::Metadata => self.collect_metadata(&path, &object.identifier),
+        CollectionMode::Content => {
+            // Check if this is a JSON record request
+            if contract.ctn_type == "json_record" {
+                return self.collect_json_record(&path, &object.identifier);
+            }
+            
+            if hints.has_flag("recursive_scan") {
+                let mut data = self.collect_content(&path, &object.identifier)?;
+                data.add_warning(
+                    "BEHAVIOR recursive_scan requested but not yet implemented".to_string()
+                );
+                Ok(data)
+            } else {
+                self.collect_content(&path, &object.identifier)
+            }
+        }
+        _ => Err(CollectionError::UnsupportedCollectionMode {
+            collector_id: self.id.clone(),
+            mode: format!("{:?}", contract.collection_strategy.collection_mode),
+        }),
+    }
+}
+
+    
+
+    fn supported_ctn_types(&self) -> Vec<String> {
+        vec!["file_metadata".to_string(), "file_content".to_string(), "json_record".to_string(),]
+    }
+
+    fn validate_ctn_compatibility(&self, contract: &CtnContract) -> Result<(), CollectionError> {
+        if !self.supported_ctn_types().contains(&contract.ctn_type) {
+            return Err(CollectionError::CtnContractValidation {
+                reason: format!("CTN type '{}' not supported", contract.ctn_type),
+            });
+        }
+        Ok(())
+    }
+
+    fn collector_id(&self) -> &str {
+        &self.id
+    }
+
+    fn supports_batch_collection(&self) -> bool {
+        false
+    }
+}
+
+impl Default for FileSystemCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -1,0 +1,68 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock for libraries (keep for binaries)
+# Uncomment if this is a library-only workspace
+# Cargo.lock
+
+# Build artifacts
+*.dll
+*.dylib
+*.so
+*.a
+*.lib
+*.exp
+*.ilk
+*.pdb
+
+# Testing
+/tests/tmp/
+
+# IDEs
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.log
+
+# Documentation
+/target/doc/
+
+# Profiling
+*.profdata
+*.profraw
+
+# Coverage
+*.profraw
+tarpaulin-report.html
+cobertura.xml
+
+# Backup files
+*.bak
+*.tmp
+*.temp
+
+# OS generated
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# CI/CD artifacts
+.github/workflows/*.log
+
+# DevContainer
+.devcontainer/.env
