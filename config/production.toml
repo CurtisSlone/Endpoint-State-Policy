@@ -1,0 +1,89 @@
+# Production Configuration for ICS Parser/Validator
+# Profile: PRODUCTION
+# Purpose: Secure, resource-conservative limits for production deployment
+# SSDF Compliance: Strict security boundaries optimized for production environments
+
+[file_processing]
+# Conservative limits for production
+max_file_size = 1048576              # 50MB - production file size limit
+large_file_threshold = 1048576       # 1MB - conservative threshold
+max_line_count_for_analysis = 100000 # 100K lines - reasonable production limit
+performance_log_buffer_size = 1000   # Standard buffer for production logging
+
+[lexical]
+# Production lexical limits - balanced performance/security
+max_string_size = 1048576      # 1MB - reasonable string limit
+max_identifier_length = 255    # 255 chars - standard identifier limit
+max_comment_length = 10000     # 10K chars - reasonable documentation
+max_token_count = 1000000      # 1M tokens - production file processing
+metrics_buffer_size = 1000     # Standard metrics collection
+max_string_nesting_depth = 100 # Controlled nesting depth
+
+[syntax]
+# Parser limits optimized for production
+max_parse_depth = 100           # Conservative parsing depth
+max_error_history = 50          # Balanced error tracking
+max_context_stack_depth = 20    # Efficient context management
+max_recovery_scan_tokens = 1000 # Limited error recovery
+max_lookahead_tokens = 10       # Conservative lookahead
+
+[symbols]
+# Symbol table limits for production efficiency
+max_global_symbols = 50000         # 50K global symbols - production scale
+max_local_symbols_per_ctn = 1000   # 1K local symbols per CTN
+max_symbol_relationships = 100000  # 100K relationships - controlled growth
+max_symbol_identifier_length = 255 # Standard identifier length
+max_symbol_context_depth = 50      # Reasonable context depth
+max_elements_per_symbol = 10000    # Controlled element count
+max_ctn_scopes = 1000              # Reasonable scope management
+
+[references]
+# Reference validation limits for production
+max_reference_depth = 50             # Controlled reference chains
+max_references_per_symbol = 10000    # Reasonable reference count
+max_reported_cycles = 10             # Limited cycle reporting
+max_cycle_length = 100               # Standard cycle analysis
+max_dependency_nodes = 100000        # Production dependency management
+max_relationships_per_pass = 1000000 # Balanced relationship processing
+
+[semantic]
+# Semantic analysis limits for production
+max_semantic_errors = 1000             # Production error collection
+max_runtime_operation_parameters = 100 # Standard operation complexity
+max_set_operation_operands = 1000      # Reasonable SET operations
+max_error_message_length = 10000       # Standard error descriptions
+max_cycle_path_length = 100            # Controlled cycle reporting
+max_filter_state_references = 1000     # Efficient filtering
+
+[structural]
+# Structural validation limits for production
+max_symbols_per_definition = 10000  # Production-scale definitions
+max_nesting_depth = 10              # Conservative nesting
+max_criteria_blocks = 1000          # Reasonable criteria complexity
+max_set_operands = 100              # Conservative SET operations
+max_variables_per_definition = 1000 # Standard variable count
+max_states_per_definition = 500     # Reasonable state management
+max_objects_per_definition = 200    # Conservative object count
+
+[batch_processing]
+# Batch processing for production deployment
+max_worker_threads = 8        # Standard production threading
+max_files_per_batch = 1000    # Conservative batch sizes
+max_batch_memory = 1000000000 # 1GB - production memory limit
+
+[security]
+# Strict security limits for production - SSDF: RV.1 (Monitoring), PW.8.1 (DoS Protection)
+memory_alert_threshold = 500000000 # 500MB - early warning threshold
+max_processing_time_seconds = 300  # 5 minutes - production timeout
+audit_log_buffer_size = 10000      # Comprehensive audit logging
+max_concurrent_operations = 100    # Controlled concurrency
+
+[logging]
+# Production logging limits - SSDF: PW.8.1 (DoS Protection), PW.3.1 (Audit Logging)
+max_error_collection = 1000         # Standard error collection
+log_buffer_size = 10000             # Production log management
+max_log_message_length = 10000      # Standard message length
+max_log_events_per_file = 1000      # Controlled logging per file
+max_concurrent_log_operations = 100 # Production logging concurrency
+security_min_log_level = 1          # Warning level minimum (SSDF: PW.3.1)
+audit_log_retention_buffer = 50000  # Enhanced audit trail (SSDF: PW.3.1)

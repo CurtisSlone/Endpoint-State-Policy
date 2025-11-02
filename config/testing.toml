@@ -1,0 +1,89 @@
+# Testing Configuration for ICS Parser/Validator
+# Profile: TESTING
+# Purpose: Controlled limits for automated testing, CI/CD, and validation
+# SSDF Compliance: Security boundaries maintained with testing-focused adjustments
+
+[file_processing]
+# Testing-optimized file processing limits
+max_file_size = 10485760                     # 10MB - reasonable for test files
+large_file_threshold = 524288                # 512KB - smaller threshold for testing
+max_line_count_for_analysis = 50000          # 50K lines - adequate for test cases
+performance_log_buffer_size = 2000           # Enhanced logging for test analysis
+
+[lexical]
+# Lexical limits suitable for testing scenarios
+max_string_size = 524288                     # 512KB - adequate for test strings
+max_identifier_length = 256                 # 256 chars - testing edge cases
+max_comment_length = 5000                   # 5K chars - test documentation
+max_token_count = 500000                    # 500K tokens - comprehensive testing
+metrics_buffer_size = 2000                  # Enhanced metrics for test validation
+max_string_nesting_depth = 50               # Moderate nesting for testing
+
+[syntax]
+# Parser limits optimized for test coverage
+max_parse_depth = 50                        # Moderate depth for test cases
+max_error_history = 75                      # More error context for test validation
+max_context_stack_depth = 30               # Enhanced context for debugging tests
+max_recovery_scan_tokens = 2000            # More recovery for test robustness
+max_lookahead_tokens = 15                  # Enhanced lookahead for test parsing
+
+[symbols]
+# Symbol table limits for comprehensive testing
+max_global_symbols = 25000                 # 25K global symbols - test scale
+max_local_symbols_per_ctn = 2000           # 2K local symbols for test complexity
+max_symbol_relationships = 200000          # 200K relationships - extensive testing
+max_symbol_identifier_length = 256        # Testing identifier edge cases
+max_symbol_context_depth = 75             # Enhanced context for test validation
+max_elements_per_symbol = 25000           # Large structures for stress testing
+max_ctn_scopes = 2000                     # Multiple scopes for test coverage
+
+[references]
+# Reference validation limits for testing
+max_reference_depth = 75                   # Deeper references for edge case testing
+max_references_per_symbol = 25000         # Enhanced reference testing
+max_reported_cycles = 25                  # More cycle reporting for test validation
+max_cycle_length = 150                    # Longer cycles for comprehensive testing
+max_dependency_nodes = 200000             # Large dependency graphs for testing
+max_relationships_per_pass = 2000000      # Enhanced relationship testing
+
+[semantic]
+# Semantic analysis limits for testing
+max_semantic_errors = 2500                # More errors for comprehensive testing
+max_runtime_operation_parameters = 150    # Complex operations for testing
+max_set_operation_operands = 2000         # Large SET operations for testing
+max_error_message_length = 25000          # Detailed error messages for test validation
+max_cycle_path_length = 150               # Longer cycle paths for testing
+max_filter_state_references = 2000        # Complex filtering for test coverage
+
+[structural]
+# Structural validation limits for testing
+max_symbols_per_definition = 25000        # Large definitions for stress testing
+max_nesting_depth = 15                    # Deeper nesting for edge case testing
+max_criteria_blocks = 2000                # Many criteria blocks for testing
+max_set_operands = 200                    # Enhanced SET operations for testing
+max_variables_per_definition = 2000       # Many variables for test complexity
+max_states_per_definition = 1000          # Enhanced state testing
+max_objects_per_definition = 500          # More objects for test coverage
+
+[batch_processing]
+# Batch processing for testing environments
+max_worker_threads = 4                    # Limited threads for CI/CD environments
+max_files_per_batch = 500                # Smaller batches for test isolation
+max_batch_memory = 500000000             # 500MB - controlled memory for testing
+
+[security]
+# Security limits adjusted for testing - SSDF: RV.1 (Monitoring), PW.8.1 (DoS Protection)
+memory_alert_threshold = 250000000       # 250MB - lower threshold for test monitoring
+max_processing_time_seconds = 120        # 2 minutes - faster timeout for testing
+audit_log_buffer_size = 5000             # Adequate audit logging for tests
+max_concurrent_operations = 50           # Limited concurrency for test stability
+
+[logging]
+# Testing logging limits - SSDF: PW.8.1 (DoS Protection), PW.3.1 (Audit Logging)
+max_error_collection = 2500              # Enhanced error collection for test analysis
+log_buffer_size = 5000                   # Adequate log management for testing
+max_log_message_length = 25000           # Detailed messages for test debugging
+max_log_events_per_file = 2500           # More events for comprehensive test logging
+max_concurrent_log_operations = 50       # Controlled logging concurrency for tests
+security_min_log_level = 1               # Warning level minimum (SSDF: PW.3.1)
+audit_log_retention_buffer = 25000       # Adequate audit trail for testing (SSDF: PW.3.1)

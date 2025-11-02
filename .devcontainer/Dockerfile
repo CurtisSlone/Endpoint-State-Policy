@@ -39,28 +39,30 @@ RUN rustup component add \
     rust-src \
     rust-analysis
 
-# Install essential Cargo tools
+# Install essential Cargo tools (split into groups to handle compatibility)
+# Tools that work with current stable Rust
 RUN cargo install --locked \
     cargo-audit \
-    cargo-deny \
     cargo-outdated \
-    cargo-edit \
     cargo-watch \
-    cargo-expand \
     cargo-tree
 
 # Install additional security and analysis tools
-RUN cargo install --locked \
-    cargo-geiger \
-    cargo-bloat \
-    cargo-udeps
+RUN cargo install --locked cargo-bloat
+
+# Note: Several popular cargo tools now require Rust 1.85+ due to edition2024:
+# - cargo-deny (dependency policy) - use CI/CD with GitHub Actions
+# - cargo-geiger (unsafe detection) - requires Rust 1.85+
+# - cargo-expand (macro expansion) - requires edition2024
+# - cargo-edit (dependency management) - requires edition2024
+# These can be added when Rust 1.85+ is released, or run in CI/CD with latest Rust
 
 # Create post-create script directory
 RUN mkdir -p /workspace/.devcontainer
 
 # Create a basic post-create script
 RUN echo '#!/bin/bash\n\
-echo "ESP Compiler Development Environment"\n\
+echo "Rust Development Environment"\n\
 echo "===================================="\n\
 rustc --version\n\
 cargo --version\n\
@@ -69,10 +71,13 @@ echo "Available tools:"\n\
 echo "  - cargo clippy    (linting)"\n\
 echo "  - cargo fmt       (formatting)"\n\
 echo "  - cargo audit     (security auditing)"\n\
-echo "  - cargo deny      (dependency policy)"\n\
 echo "  - cargo watch     (auto-rebuild)"\n\
-echo "  - cargo expand    (macro expansion)"\n\
-echo "  - cargo geiger    (unsafe code detection)"\n\
+echo "  - cargo tree      (dependency tree)"\n\
+echo "  - cargo outdated  (outdated deps check)"\n\
+echo "  - cargo bloat     (binary size analysis)"\n\
+echo ""\n\
+echo "Note: cargo-deny and cargo-geiger require Rust 1.85+"\n\
+echo "Use deny.toml validation in CI/CD with GitHub Actions"\n\
 echo ""\n\
 echo "Ready for development!"\n\
 ' > /workspace/.devcontainer/post-create.sh && chmod +x /workspace/.devcontainer/post-create.sh

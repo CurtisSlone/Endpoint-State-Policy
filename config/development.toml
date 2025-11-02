@@ -1,0 +1,89 @@
+# Development Configuration for ICS Parser/Validator
+# Profile: DEVELOPMENT
+# Purpose: Relaxed limits for development, testing, and debugging
+# SSDF Compliance: Security boundaries maintained but with higher limits for development flexibility
+
+[file_processing]
+# Higher limits for development testing
+max_file_size = 104857600                    # 100MB - allows testing with larger files
+large_file_threshold = 5242880               # 5MB - higher threshold for development
+max_line_count_for_analysis = 500000         # 500K lines - extensive testing capability
+performance_log_buffer_size = 5000           # Larger buffer for detailed development logging
+
+[lexical]
+# Development-friendly lexical limits
+max_string_size = 2097152                    # 2MB - allows testing with large strings
+max_identifier_length = 512                 # 512 chars - generous for development
+max_comment_length = 50000                  # 50K chars - extensive documentation testing
+max_token_count = 5000000                   # 5M tokens - large file testing
+metrics_buffer_size = 5000                  # Detailed metrics collection
+max_string_nesting_depth = 200              # Deep nesting testing
+
+[syntax]
+# Parser limits for development
+max_parse_depth = 200                       # Deep nesting for testing
+max_error_history = 100                     # More error context for debugging
+max_context_stack_depth = 50               # Generous context tracking
+max_recovery_scan_tokens = 5000            # Extensive error recovery
+max_lookahead_tokens = 20                  # More lookahead for complex parsing
+
+[symbols]
+# Symbol table limits for development
+max_global_symbols = 100000                # 100K global symbols
+max_local_symbols_per_ctn = 5000           # 5K local symbols per CTN
+max_symbol_relationships = 500000          # 500K relationships
+max_symbol_identifier_length = 512        # Match lexical limit
+max_symbol_context_depth = 100            # Deep context for debugging
+max_elements_per_symbol = 50000           # Large structures for testing
+max_ctn_scopes = 5000                     # Many scopes for complex testing
+
+[references]
+# Reference validation limits for development
+max_reference_depth = 100                  # Deep reference chains
+max_references_per_symbol = 50000         # Many references per symbol
+max_reported_cycles = 50                  # More cycle reporting for debugging
+max_cycle_length = 200                    # Long cycles for testing
+max_dependency_nodes = 500000             # Large dependency graphs
+max_relationships_per_pass = 5000000      # Extensive relationship processing
+
+[semantic]
+# Semantic analysis limits for development
+max_semantic_errors = 5000                # Collect many errors for analysis
+max_runtime_operation_parameters = 200    # Complex operations testing
+max_set_operation_operands = 5000         # Large SET operations
+max_error_message_length = 50000          # Detailed error messages
+max_cycle_path_length = 200               # Long cycle paths for debugging
+max_filter_state_references = 5000        # Complex filtering testing
+
+[structural]
+# Structural validation limits for development
+max_symbols_per_definition = 50000        # Large definitions for testing
+max_nesting_depth = 20                    # Deep nesting testing
+max_criteria_blocks = 5000                # Many criteria blocks
+max_set_operands = 500                    # Large SET operations
+max_variables_per_definition = 5000       # Many variables
+max_states_per_definition = 2500          # Many states
+max_objects_per_definition = 1000         # Many objects
+
+[batch_processing]
+# Batch processing for development
+max_worker_threads = 16                   # More threads for development machine
+max_files_per_batch = 5000               # Large batches for testing
+max_batch_memory = 2000000000            # 2GB for development
+
+[security]
+# Security limits for development (still enforced but relaxed)
+memory_alert_threshold = 1000000000      # 1GB threshold for development
+max_processing_time_seconds = 1800       # 30 minutes for complex development tests
+audit_log_buffer_size = 50000            # Extensive audit logging
+max_concurrent_operations = 200          # More concurrent ops for testing
+
+[logging]
+# Logging limits for development - SSDF: PW.8.1 (DoS Protection), PW.3.1 (Audit Logging)
+max_error_collection = 5000              # Collect many errors for analysis
+log_buffer_size = 50000                  # Large log buffers
+max_log_message_length = 50000           # Detailed log messages
+max_log_events_per_file = 5000           # Many log events for debugging
+max_concurrent_log_operations = 200      # High concurrency for development
+security_min_log_level = 1               # Warning level minimum (SSDF: PW.3.1)
+audit_log_retention_buffer = 50000       # Extensive audit trail (SSDF: PW.3.1)
