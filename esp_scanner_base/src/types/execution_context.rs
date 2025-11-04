@@ -1,16 +1,18 @@
 // src/types/execution_context.rs
 //! Execution context with resolved symbols ready for compliance validation
-use crate::types::common::{DataType, FieldPath, LogicalOp, Operation, RecordData, ResolvedValue};
-use crate::types::criteria::{CriteriaRoot, CriteriaTree};
+use crate::types::common::{DataType, LogicalOp, Operation, RecordData, ResolvedValue};
+use crate::types::criteria::CriteriaTree;
 use crate::types::criterion::{CriterionDeclaration, CtnNodeId};
 use crate::types::filter::ResolvedFilterSpec;
 use crate::types::metadata::MetaDataBlock;
-use crate::types::object::{ModuleField, ResolvedObject, ResolvedObjectElement};
+use crate::types::object::{ResolvedObject, ResolvedObjectElement};
 use crate::types::resolution_context::{DeferredOperation, ResolutionContext};
-use crate::types::state::{EntityCheck, ResolvedState};
-use crate::types::test::TestSpecification;
 use crate::types::variable::ResolvedVariable;
+use crate::types::FieldPath;
 use crate::types::ResolvedSetOperation;
+use crate::types::TestSpecification;
+use crate::types::{EntityCheck, ResolvedState};
+use esp_compiler::grammar::ModuleField;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 // ============================================================================
@@ -84,7 +86,6 @@ impl ExecutableCriteriaTree {
                 declaration,
                 node_id,
             } => {
-
                 let executable =
                     ExecutableCriterion::from_declaration(declaration, *node_id, context)?;
                 Ok(Self::Criterion(executable))
@@ -138,7 +139,7 @@ impl ExecutableCriteriaTree {
 /// Execution context with resolved symbols and executable criteria tree
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
-    /// Metadata from ICS definition
+    /// Metadata from ESP definition
     pub metadata: Option<MetaDataBlock>,
     /// CHANGED: Executable criteria tree (not flat list)
     pub criteria_tree: ExecutableCriteriaTree,
@@ -202,7 +203,7 @@ impl ExecutionContext {
         }
 
         Ok(Self {
-            metadata: resolution_context.metadata.clone(),
+            metadata: Some(resolution_context.metadata.clone()),
             criteria_tree,
             global_variables,
             global_states,
@@ -356,8 +357,8 @@ pub struct ExecutableObject {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutableObjectElement {
     Module {
-        field: ModuleField,
-        value: String,
+        field: ModuleField, // Compiler's enum
+        value: String,      // Actual value
     },
     Parameter {
         data_type: DataType,
@@ -387,10 +388,20 @@ impl ExecutableObject {
             .resolved_elements
             .iter()
             .map(|elem| match elem {
-                ResolvedObjectElement::Module { field, value } => ExecutableObjectElement::Module {
-                    field: field.clone(),
-                    value: value.clone(),
-                },
+                ResolvedObjectElement::Module { field, value } => {
+                    // Parse string field name to ModuleField enum
+                    let module_field = match field.as_str() {
+                        "module_name" | "name" => ModuleField::ModuleName,
+                        "module_version" | "version" => ModuleField::ModuleVersion,
+                        "module_type" | "type" => ModuleField::ModuleType,
+                        "module_path" | "path" => ModuleField::ModulePath,
+                        _ => ModuleField::ModuleName, // Default fallback
+                    };
+                    ExecutableObjectElement::Module {
+                        field: module_field,
+                        value: value.clone(),
+                    }
+                }
                 ResolvedObjectElement::Parameter { data_type, data } => {
                     ExecutableObjectElement::Parameter {
                         data_type: *data_type,
@@ -501,9 +512,7 @@ pub enum ExecutableRecordContent {
         value: ResolvedValue,
     },
     /// Nested field validation
-    Nested {
-        fields: Vec<ExecutableRecordField>,
-    },
+    Nested { fields: Vec<ExecutableRecordField> },
 }
 
 /// Individual field within a record check
@@ -530,7 +539,7 @@ impl ExecutableState {
                 entity_check: field.entity_check,
             })
             .collect();
-        
+
         // NEW: Convert record checks
         let record_checks = resolved
             .resolved_record_checks
@@ -554,24 +563,24 @@ impl ExecutableState {
                                 entity_check: f.entity_check,
                             })
                             .collect();
-                        
+
                         ExecutableRecordContent::Nested {
                             fields: executable_fields,
                         }
                     }
                 };
-                
+
                 ExecutableRecordCheck {
                     data_type: check.data_type,
                     content,
                 }
             })
             .collect();
-        
+
         Self {
             identifier: resolved.identifier.clone(),
             fields,
-            record_checks,  // NEW: Add this
+            record_checks, // NEW: Add this
             is_global: resolved.is_global,
         }
     }

@@ -1,22 +1,17 @@
-use crate::ffi::logging::{
-    consumer_codes, log_consumer_debug, log_consumer_error, log_consumer_info,
-};
-use crate::ffi::types::PipelineOutput;
 use crate::resolution::dag::{DependencyGraph, SymbolType};
 use crate::resolution::error::ResolutionError;
 use crate::resolution::field_resolver::FieldResolver;
-use crate::resolution::symbol_parser;
 use crate::types::execution_context::ExecutionContext;
-use crate::types::object::{ObjectDeclaration, ObjectElement, ResolvedObject};
+use crate::types::object::ObjectDeclaration;
 use crate::types::resolution_context::{DeferredOperation, ResolutionContext};
-use crate::types::runtime_operation::{OperationCategory, RunParameter};
 use crate::types::set::SetOperand;
 use crate::types::state::{ResolvedState, StateDeclaration};
 use crate::types::variable::{ResolvedVariable, VariableDeclaration};
-use crate::types::CriterionDeclaration;
 use crate::types::{
     RecordCheck, RecordContent, ResolvedRecordCheck, ResolvedRecordContent, ResolvedRecordField,
 };
+use esp_compiler::grammar::ast::nodes::{ObjectElement, RunParameter};
+use esp_compiler::{log_debug, log_info};
 use std::collections::HashMap;
 
 pub struct ResolutionEngine {
@@ -25,109 +20,53 @@ pub struct ResolutionEngine {
 
 impl ResolutionEngine {
     pub fn new() -> Self {
-        let _ = log_consumer_debug("Creating DAG-based Resolution Engine", &[]);
+        log_debug!("Creating DAG-based Resolution Engine");
         Self {
             field_resolver: FieldResolver::new(),
         }
     }
 
-    pub fn process_pipeline_output(
-    &mut self,
-    output: &PipelineOutput,
-) -> Result<ExecutionContext, ResolutionError> {
-    let _ = log_consumer_info(
-        "Starting DAG resolution pipeline",
-        &[
-            ("has_ast", &(!output.ast_tree.is_null()).to_string()),
-            ("has_symbols", &(!output.symbols.is_null()).to_string()),
-        ],
-    );
+    pub fn resolve_context(
+        &mut self,
+        context: &mut ResolutionContext,
+    ) -> Result<ExecutionContext, ResolutionError> {
+        log_info!(
+            "Starting DAG resolution pipeline",
+            "variables" => context.variables.len(),
+            "states" => context.states.len(),
+            "objects" => context.objects.len()
+        );
 
-    // Parse pipeline output with relationships
-    let mut context = self.parse_pipeline_output(output)?;
+        // Perform DAG-based resolution
+        self.resolve_dag(context)?;
 
-    // Perform DAG-based resolution
-    self.resolve_dag(&mut context)?;
+        // Expand sets in resolution context
+        crate::resolution::set_expansion::expand_sets_in_resolution_context(context)?;
 
-    // ✅ ADD THIS LINE HERE (between resolve_dag and ExecutionContext creation):
-    crate::resolution::set_expansion::expand_sets_in_resolution_context(&mut context)?;
+        // Create ExecutionContext
+        let execution_context = ExecutionContext::from_resolution_context(context)
+            .map_err(|e| ResolutionError::ContextError(e.to_string()))?;
 
-    // Create ExecutionContext
-    let execution_context = ExecutionContext::from_resolution_context(&context)
-        .map_err(|e| ResolutionError::ContextError(e.to_string()))?;
+        execution_context
+            .validate()
+            .map_err(|e| ResolutionError::ContextError(e.to_string()))?;
 
-    execution_context
-        .validate()
-        .map_err(|e| ResolutionError::ContextError(e.to_string()))?;
+        log_info!(
+            "DAG resolution pipeline completed",
+            "criteria_count" => execution_context.criteria_tree.count_criteria(),
+            "variables_count" => execution_context.global_variables.len(),
+            "deferred_operations" => execution_context.deferred_operations.len()
+        );
 
-    let _ = log_consumer_info(
-        "DAG resolution pipeline completed",
-        &[
-            (
-                "criteria_count",
-                &execution_context.criteria_tree.count_criteria().to_string(),
-            ),
-            (
-                "variables_count",
-                &execution_context.global_variables.len().to_string(),
-            ),
-            (
-                "deferred_operations",
-                &execution_context.deferred_operations.len().to_string(),
-            ),
-        ],
-    );
-
-    Ok(execution_context)
-}
-
-    /// Parse pipeline output with integrated relationship extraction
-    fn parse_pipeline_output(
-        &self,
-        output: &PipelineOutput,
-    ) -> Result<ResolutionContext, ResolutionError> {
-        let _ = log_consumer_debug("Parsing pipeline output with relationship integration", &[]);
-
-        if output.ast_tree.is_null() {
-            return Err(ResolutionError::InvalidInput {
-                message: "Pipeline output contains null AST".to_string(),
-            });
-        }
-
-        // Parse base context from AST
-        let mut context = ResolutionContext::from_pipeline_output(output)
-            .map_err(|e| ResolutionError::InvalidInput { message: e })?;
-
-        // Parse symbol relationships
-        match symbol_parser::parse_relationships_from_json(&output.symbols) {
-            Ok(relationships) => {
-                let _ = log_consumer_debug(
-                    "Parsed symbol relationships",
-                    &[("count", &relationships.len().to_string())],
-                );
-                context.relationships = relationships;
-            }
-            Err(e) => {
-                let _ = log_consumer_error(
-                    consumer_codes::CONSUMER_PIPELINE_ERROR,
-                    &format!("Failed to parse relationships: {}", e),
-                    &[],
-                );
-                return Err(e);
-            }
-        }
-
-        Ok(context)
+        Ok(execution_context)
     }
 
     /// Main DAG resolution method
     fn resolve_dag(&mut self, context: &mut ResolutionContext) -> Result<(), ResolutionError> {
-        let _ = log_consumer_info(
+        log_info!(
             "Starting DAG resolution",
-            &[
-                ("symbols", &self.count_symbols(context).to_string()),
-                ("relationships", &context.relationships.len().to_string()),
-            ],
+            "symbols" => self.count_symbols(context),
+            "relationships" => context.relationships.len()
         );
 
         // Build dependency graph (only includes resolution-time operations)
@@ -136,63 +75,27 @@ impl ResolutionEngine {
         // Get resolution order via topological sort
         let resolution_order = graph.topological_sort()?;
 
-        let _ = log_consumer_debug(
+        log_debug!(
             "Topological sort completed",
-            &[
-                (
-                    "resolution_order_length",
-                    &resolution_order.len().to_string(),
-                ),
-                (
-                    "first_symbols",
-                    &resolution_order
-                        .iter()
-                        .take(5)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
-            ],
+            "resolution_order_length" => resolution_order.len()
         );
 
         // Resolve symbols in dependency order
         self.resolve_symbols_in_order(&resolution_order, context)?;
 
-        let _ = log_consumer_info(
+        log_info!(
             "Before resolving local symbols",
-            &[
-                (
-                    "resolved_variables_count",
-                    &context.resolved_variables.len().to_string(),
-                ),
-                (
-                    "resolved_variables",
-                    &context
-                        .resolved_variables
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
-            ],
+            "resolved_variables_count" => context.resolved_variables.len()
         );
 
         // Resolve local symbols (CTN-scoped)
         self.resolve_local_symbols(context)?;
 
-        let _ = log_consumer_info(
+        log_info!(
             "DAG resolution completed",
-            &[
-                (
-                    "resolved_variables",
-                    &context.resolved_variables.len().to_string(),
-                ),
-                ("resolved_sets", &context.resolved_sets.len().to_string()),
-                (
-                    "deferred_operations",
-                    &context.scan_time_operations.len().to_string(),
-                ),
-            ],
+            "resolved_variables" => context.resolved_variables.len(),
+            "resolved_sets" => context.resolved_sets.len(),
+            "deferred_operations" => context.scan_time_operations.len()
         );
 
         Ok(())
@@ -203,10 +106,7 @@ impl ResolutionEngine {
         &self,
         context: &ResolutionContext,
     ) -> Result<DependencyGraph, ResolutionError> {
-        let _ = log_consumer_debug(
-            "Building dependency graph with operation categorization",
-            &[],
-        );
+        log_debug!("Building dependency graph with operation categorization");
 
         let mut graph = DependencyGraph::new();
 
@@ -216,17 +116,14 @@ impl ResolutionEngine {
         }
 
         // Step 2: Add RUN operation target variables as nodes (computed variables)
-        // This ensures all computed variables exist before edges reference them
         for runtime_op in &context.runtime_operations {
             if !graph.nodes.contains_key(&runtime_op.target_variable) {
                 graph.add_node(runtime_op.target_variable.clone(), SymbolType::Variable)?;
 
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Added computed variable node to DAG",
-                    &[
-                        ("variable", &runtime_op.target_variable),
-                        ("operation", runtime_op.operation_type.as_str()),
-                    ],
+                    "variable" => runtime_op.target_variable.as_str(),
+                    "operation" => format!("{:?}", runtime_op.operation_type).as_str()
                 );
             }
         }
@@ -244,61 +141,33 @@ impl ResolutionEngine {
             graph.add_node(set_op.set_id.clone(), SymbolType::SetOperation)?;
         }
 
-        // Step 4: Add edges from parsed relationships (hard dependencies only)
-        // All nodes now exist, so this won't fail
+        // Step 4: Add edges from parsed relationships
         for relationship in &context.relationships {
-            if relationship.relationship_type.is_hard_dependency() {
-                graph.add_dependency(&relationship.source, &relationship.target)?;
-            }
+            graph.add_dependency(&relationship.from, &relationship.to)?;
         }
 
-        // Step 5: Add runtime operation dependencies (ONLY resolution-time operations)
+        // Step 5: Add runtime operation dependencies (resolution-time only)
         for runtime_op in &context.runtime_operations {
-            match runtime_op.categorize(context) {
-                OperationCategory::ResolutionTime => {
-                    // Add to DAG: target variable depends on input parameters
-                    for param in &runtime_op.parameters {
-                        match param {
-                            RunParameter::Variable(input_var) => {
-                                graph.add_dependency(&runtime_op.target_variable, input_var)?;
-                            }
-                            RunParameter::ArithmeticOp { operand, .. } => {
-                                if let Some(var_name) = operand.get_variable_name() {
-                                    graph.add_dependency(&runtime_op.target_variable, var_name)?;
-                                }
-                            }
-                            RunParameter::Literal(value) => {
-                                // Check if literal contains variable reference
-                                if let Some(var_name) = value.get_variable_name() {
-                                    graph.add_dependency(&runtime_op.target_variable, var_name)?;
-                                }
-                            }
-                            _ => {} // Other parameters don't create dependencies
-                        }
-                    }
+            // Check if operation has object dependency
+            let has_object_dep = runtime_op.has_object_dependency();
 
-                    let _ = log_consumer_debug(
-                        "Added resolution-time RUN operation to DAG",
-                        &[
-                            ("target", &runtime_op.target_variable),
-                            ("operation", runtime_op.operation_type.as_str()),
-                        ],
-                    );
+            if !has_object_dep {
+                // Resolution-time operation - add to DAG
+                for param in &runtime_op.parameters {
+                    if let Some(var_name) = Self::extract_variable_from_param(param) {
+                        graph.add_dependency(&runtime_op.target_variable, &var_name)?;
+                    }
                 }
-                OperationCategory::ScanTime => {
-                    // Don't add to DAG - will be deferred
-                    let _ = log_consumer_debug(
-                        "Runtime operation deferred to scan-time (not in DAG)",
-                        &[
-                            ("target", &runtime_op.target_variable),
-                            ("operation", runtime_op.operation_type.as_str()),
-                            (
-                                "has_object_dep",
-                                &runtime_op.has_object_dependency().to_string(),
-                            ),
-                        ],
-                    );
-                }
+
+                log_debug!(
+                    "Added resolution-time RUN operation to DAG",
+                    "target" => runtime_op.target_variable.as_str()
+                );
+            } else {
+                log_debug!(
+                    "Runtime operation deferred to scan-time (not in DAG)",
+                    "target" => runtime_op.target_variable.as_str()
+                );
             }
         }
 
@@ -316,24 +185,31 @@ impl ResolutionEngine {
         graph.validate()?;
 
         let stats = graph.get_stats();
-        let _ = log_consumer_debug(
+        log_debug!(
             "Dependency graph built successfully",
-            &[
-                ("nodes", &stats.total_nodes.to_string()),
-                ("edges", &stats.total_edges.to_string()),
-                (
-                    "independent_nodes",
-                    &graph.get_independent_symbols().len().to_string(),
-                ),
-            ],
+            "nodes" => stats.total_nodes,
+            "edges" => stats.total_edges
         );
 
         Ok(graph)
     }
 
-    fn extract_all_criteria_from_tree(context: &ResolutionContext) -> Vec<&CriterionDeclaration> {
-        context.criteria_root.get_all_criteria()
+    /// Extract variable name from RunParameter
+    fn extract_variable_from_param(param: &RunParameter) -> Option<String> {
+        match param {
+            RunParameter::Variable(var_name) => Some(var_name.clone()),
+            RunParameter::Literal(value) => {
+                use crate::types::common::ValueExt;
+                value.get_variable_name().map(|s| s.to_string())
+            }
+            RunParameter::ArithmeticOp(_, value) => {
+                use crate::types::common::ValueExt;
+                value.get_variable_name().map(|s| s.to_string())
+            }
+            _ => None,
+        }
     }
+
     /// Add cross-type dependencies (SET operations, states, objects)
     fn add_cross_type_dependencies(
         &self,
@@ -351,9 +227,19 @@ impl ResolutionEngine {
                         graph.add_dependency(&set_op.set_id, other_set_id)?;
                     }
                     SetOperand::InlineObject(obj) => {
-                        for var_ref in obj.get_variable_references() {
+                        // Get variable references from the inline object definition
+                        let scanner_obj = crate::types::ObjectDeclaration::from_ast_node(obj);
+                        for var_ref in scanner_obj.get_variable_references() {
                             graph.add_dependency(&set_op.set_id, &var_ref)?;
                         }
+                    }
+                    SetOperand::FilteredObjectRef {
+                        object_id,
+                        filter: _,
+                    } => {
+                        // Add dependency on the referenced object
+                        graph.add_dependency(&set_op.set_id, object_id)?;
+                        // Filter dependencies would be handled separately
                     }
                 }
             }
@@ -361,7 +247,7 @@ impl ResolutionEngine {
             // SET filter dependencies
             if let Some(filter) = &set_op.filter {
                 for state_ref in &filter.state_refs {
-                    graph.add_dependency(&set_op.set_id, state_ref)?;
+                    graph.add_dependency(&set_op.set_id, &state_ref.state_id)?;
                 }
             }
         }
@@ -369,6 +255,7 @@ impl ResolutionEngine {
         // State dependencies on variables
         for state in &context.global_states {
             for field in &state.fields {
+                use crate::types::common::ValueExt;
                 if let Some(var_name) = field.value.get_variable_name() {
                     graph.add_dependency(&state.identifier, var_name)?;
                 }
@@ -390,10 +277,7 @@ impl ResolutionEngine {
         resolution_order: &[String],
         context: &mut ResolutionContext,
     ) -> Result<(), ResolutionError> {
-        let _ = log_consumer_debug(
-            "Resolution order",
-            &[("order", &resolution_order.join(" -> "))],
-        );
+        log_debug!("Resolution order", "order" => resolution_order.join(" -> ").as_str());
 
         for symbol_id in resolution_order {
             let symbol_type = self.determine_symbol_type(symbol_id, context);
@@ -412,7 +296,7 @@ impl ResolutionEngine {
                     self.resolve_set_operation(symbol_id, context)?;
                 }
                 _ => {
-                    let _ = log_consumer_debug("Skipping unknown symbol", &[("id", symbol_id)]);
+                    log_debug!("Skipping unknown symbol", "id" => symbol_id);
                 }
             }
         }
@@ -441,40 +325,39 @@ impl ResolutionEngine {
                     .insert(variable_name.to_string(), resolved);
             } else {
                 // Declared computed variable (no initial value)
-
                 if let Some(run_op) = context
                     .runtime_operations
                     .iter()
                     .find(|op| op.target_variable == variable_name)
                 {
-                    match run_op.categorize(context) {
-                        OperationCategory::ResolutionTime => {
-                            let result =
-                                crate::resolution::runtime_operations::execute_runtime_operation(
-                                    run_op,
-                                    &context.resolved_variables,
-                                )?;
+                    let has_object_dep = run_op.has_object_dependency();
 
-                            let resolved_var = ResolvedVariable {
-                                identifier: variable_name.to_string(),
-                                data_type: var.data_type.clone(),
-                                value: result.clone(),
-                            };
+                    if !has_object_dep {
+                        // Resolution-time
+                        let result =
+                            crate::resolution::runtime_operations::execute_runtime_operation(
+                                run_op,
+                                &context.resolved_variables,
+                            )?;
 
-                            context
-                                .resolved_variables
-                                .insert(variable_name.to_string(), resolved_var);
-                        }
-                        OperationCategory::ScanTime => {
-                            let deferred = DeferredOperation {
-                                target_variable: variable_name.to_string(),
-                                operation_type: run_op.operation_type,
-                                parameters: run_op.parameters.clone(),
-                                source_object_id: run_op.extract_object_id(),
-                            };
+                        let resolved_var = ResolvedVariable {
+                            identifier: variable_name.to_string(),
+                            data_type: var.data_type,
+                            value: result.clone(),
+                        };
 
-                            context.scan_time_operations.push(deferred);
-                        }
+                        context
+                            .resolved_variables
+                            .insert(variable_name.to_string(), resolved_var);
+                    } else {
+                        // Scan-time - defer
+                        let deferred = DeferredOperation {
+                            target_variable: variable_name.to_string(),
+                            operation: run_op.clone(),
+                            dependencies: run_op.get_variable_references(),
+                        };
+
+                        context.scan_time_operations.push(deferred);
                     }
                 } else {
                     return Err(ResolutionError::UndefinedVariable {
@@ -485,40 +368,38 @@ impl ResolutionEngine {
             }
         } else {
             // CASE 2: Variable is NOT declared - check RUN operations
-
             if let Some(run_op) = context
                 .runtime_operations
                 .iter()
                 .find(|op| op.target_variable == variable_name)
             {
-                match run_op.categorize(context) {
-                    OperationCategory::ResolutionTime => {
-                        let result =
-                            crate::resolution::runtime_operations::execute_runtime_operation(
-                                run_op,
-                                &context.resolved_variables,
-                            )?;
+                let has_object_dep = run_op.has_object_dependency();
 
-                        let resolved_var = ResolvedVariable {
-                            identifier: variable_name.to_string(),
-                            data_type: run_op.operation_type.output_type(),
-                            value: result.clone(),
-                        };
+                if !has_object_dep {
+                    // Resolution-time
+                    let result = crate::resolution::runtime_operations::execute_runtime_operation(
+                        run_op,
+                        &context.resolved_variables,
+                    )?;
 
-                        context
-                            .resolved_variables
-                            .insert(variable_name.to_string(), resolved_var);
-                    }
-                    OperationCategory::ScanTime => {
-                        let deferred = DeferredOperation {
-                            target_variable: variable_name.to_string(),
-                            operation_type: run_op.operation_type,
-                            parameters: run_op.parameters.clone(),
-                            source_object_id: run_op.extract_object_id(),
-                        };
+                    let resolved_var = ResolvedVariable {
+                        identifier: variable_name.to_string(),
+                        data_type: crate::types::common::DataType::String, // Default
+                        value: result.clone(),
+                    };
 
-                        context.scan_time_operations.push(deferred);
-                    }
+                    context
+                        .resolved_variables
+                        .insert(variable_name.to_string(), resolved_var);
+                } else {
+                    // Scan-time - defer
+                    let deferred = DeferredOperation {
+                        target_variable: variable_name.to_string(),
+                        operation: run_op.clone(),
+                        dependencies: run_op.get_variable_references(),
+                    };
+
+                    context.scan_time_operations.push(deferred);
                 }
             } else {
                 return Err(ResolutionError::UndefinedVariable {
@@ -740,16 +621,16 @@ impl ResolutionEngine {
 
     fn resolve_single_state_field(
         &self,
-        field: &crate::types::StateField,
+        field: &crate::types::state::StateField,
         resolved_variables: &HashMap<String, ResolvedVariable>,
-    ) -> Result<crate::types::ResolvedStateField, ResolutionError> {
+    ) -> Result<crate::types::state::ResolvedStateField, ResolutionError> {
         let resolved_value = self.field_resolver.resolve_value(
             &field.value,
             &format!("state field '{}'", field.name),
             resolved_variables,
         )?;
 
-        Ok(crate::types::ResolvedStateField {
+        Ok(crate::types::state::ResolvedStateField {
             name: field.name.clone(),
             data_type: field.data_type,
             operation: field.operation,
@@ -808,74 +689,86 @@ impl ResolutionEngine {
         &self,
         object: &ObjectDeclaration,
         resolved_variables: &HashMap<String, ResolvedVariable>,
-    ) -> Result<ResolvedObject, ResolutionError> {
+    ) -> Result<crate::types::object::ResolvedObject, ResolutionError> {
         let mut resolved_elements = Vec::new();
 
         for element in &object.elements {
-    let resolved_element = match element {
-        ObjectElement::Field { name, value } => {
-            let resolved_value = self.field_resolver.resolve_value(
-                value,
-                &format!("object field '{}'", name),
-                resolved_variables,
-            )?;
-            crate::types::object::ResolvedObjectElement::Field {
-                name: name.clone(),
-                value: resolved_value,
-            }
+            let resolved_element = match element {
+                ObjectElement::Field(field) => {
+                    let resolved_value = self.field_resolver.resolve_value(
+                        &field.value,
+                        &format!("object field '{}'", field.name),
+                        resolved_variables,
+                    )?;
+                    crate::types::object::ResolvedObjectElement::Field {
+                        name: field.name.clone(),
+                        value: resolved_value,
+                    }
+                }
+                ObjectElement::SetRef { set_id, .. } => {
+                    crate::types::object::ResolvedObjectElement::SetRef {
+                        set_id: set_id.clone(),
+                    }
+                }
+                ObjectElement::Filter(filter_spec) => {
+                    crate::types::object::ResolvedObjectElement::Filter(
+                        crate::types::filter::ResolvedFilterSpec::new(
+                            filter_spec.action,
+                            filter_spec
+                                .state_refs
+                                .iter()
+                                .map(|sr| sr.state_id.clone())
+                                .collect(),
+                        ),
+                    )
+                }
+                ObjectElement::Module { field, value } => {
+                    crate::types::object::ResolvedObjectElement::Module {
+                        field: field.clone(),
+                        value: value.clone(),
+                    }
+                }
+                ObjectElement::Parameter { data_type, fields } => {
+                    let fields_owned: Vec<(String, String)> =
+                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let record = crate::types::common::RecordData::from_string_pairs(fields_owned);
+                    crate::types::object::ResolvedObjectElement::Parameter {
+                        data_type: *data_type,
+                        data: record,
+                    }
+                }
+                ObjectElement::Select { data_type, fields } => {
+                    let fields_owned: Vec<(String, String)> =
+                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let record = crate::types::common::RecordData::from_string_pairs(fields_owned);
+                    crate::types::object::ResolvedObjectElement::Select {
+                        data_type: *data_type,
+                        data: record,
+                    }
+                }
+                ObjectElement::Behavior { values } => {
+                    crate::types::object::ResolvedObjectElement::Behavior {
+                        values: values.clone(),
+                    }
+                }
+                _ => {
+                    // Handle other element types that might exist
+                    continue;
+                }
+            };
+            resolved_elements.push(resolved_element);
         }
-        ObjectElement::SetRef { set_id } => {
-            crate::types::object::ResolvedObjectElement::SetRef {
-                set_id: set_id.clone(),
-            }
-        }
-        // NEW: Preserve Filter during resolution
-        ObjectElement::Filter(filter_spec) => {
-            crate::types::object::ResolvedObjectElement::Filter(
-                crate::types::filter::ResolvedFilterSpec::new(
-                    filter_spec.action,
-                    filter_spec.state_refs.clone(),
-                )
-            )
-        }
-        // Metadata/configuration elements - preserve as-is
-        ObjectElement::Module { field, value } => {
-            crate::types::object::ResolvedObjectElement::Module {
-                field: *field,
-                value: value.clone(),
-            }
-        }
-        ObjectElement::Parameter { data_type, fields } => {
-            // Convert to RecordData
-            let record = crate::types::common::RecordData::from_field_pairs(fields);
-            
-            crate::types::object::ResolvedObjectElement::Parameter {
-                data_type: *data_type,
-                data: record,
-            }
-        }
-        ObjectElement::Select { data_type, fields } => {
-            // Convert to RecordData
-            let record = crate::types::common::RecordData::from_field_pairs(fields);
-          
-            crate::types::object::ResolvedObjectElement::Select {
-                data_type: *data_type,
-                data: record,
-            }
-        }
-        ObjectElement::Behavior { values } => {
-            crate::types::object::ResolvedObjectElement::Behavior {
-                values: values.clone(),
-            }
-        }
-    };
-    resolved_elements.push(resolved_element);
-}
 
-        Ok(ResolvedObject {
+        Ok(crate::types::object::ResolvedObject {
             identifier: object.identifier.clone(),
             resolved_elements,
             is_global: object.is_global,
         })
+    }
+}
+
+impl Default for ResolutionEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }

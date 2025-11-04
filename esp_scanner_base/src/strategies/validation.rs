@@ -444,16 +444,17 @@ impl CtnContractValidator {
     /// Validate test specification compatibility
     fn validate_test_specification(
         criterion: &ExecutableCriterion,
-        contract: &CtnContract,
+        _contract: &CtnContract,
         report: &mut ValidationReport,
     ) {
+        use self::TestComponentValidation; // Bring trait into scope
         let test_spec = &criterion.test;
 
         // Validate that test specification makes sense for this CTN type
         if criterion.objects.is_empty()
             && !matches!(
                 test_spec.existence_check,
-                crate::types::test::ExistenceCheck::None
+                crate::types::ExistenceCheck::None
             )
         {
             report.add_error(
@@ -529,10 +530,8 @@ impl CtnContractValidator {
         // Check for configuration anti-patterns
         if criterion.objects.len() == 1 && criterion.states.len() == 1 {
             let test = &criterion.test;
-            if matches!(
-                test.existence_check,
-                crate::types::test::ExistenceCheck::All
-            ) && matches!(test.item_check, crate::types::test::ItemCheck::All)
+            if matches!(test.existence_check, crate::types::ExistenceCheck::All)
+                && matches!(test.item_check, crate::types::ItemCheck::All)
             {
                 report.add_warning(
                     ValidationWarningType::SuboptimalConfiguration,
@@ -658,23 +657,8 @@ trait TestComponentValidation {
     fn expects_satisfaction(&self) -> bool;
 }
 
-impl TestComponentValidation for crate::types::test::ItemCheck {
+impl TestComponentValidation for crate::types::ItemCheck {
     fn expects_satisfaction(&self) -> bool {
-        !matches!(self, crate::types::test::ItemCheck::NoneSatisfy)
-    }
-}
-
-/// Extension trait for test component string representation
-trait TestComponentDisplay {
-    fn as_str(&self) -> &'static str;
-}
-
-impl TestComponentDisplay for crate::types::test::StateJoinOp {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::And => "AND",
-            Self::Or => "OR",
-            Self::One => "ONE",
-        }
+        !matches!(self, crate::types::ItemCheck::NoneSatisfy)
     }
 }

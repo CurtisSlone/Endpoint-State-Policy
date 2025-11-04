@@ -1,14 +1,18 @@
-use super::common::{DataType, FieldPath, Operation, ResolvedValue, Value};
+use super::common::ResolvedValue;
+use super::FieldPath;
+use esp_compiler::grammar::ast::nodes::{
+    DataType, EntityCheck, Operation, RecordCheck, RecordContent, RecordField, Value,
+};
 use serde::{Deserialize, Serialize};
 
-/// State declaration from ICS definition
+/// State declaration from ESP definition (scanner working type)
 /// Can be either global (definition-level) or local (CTN-level)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateDeclaration {
     pub identifier: String,
     pub fields: Vec<StateField>,
-    pub record_checks: Vec<RecordCheck>,
-    pub is_global: bool, // true = definition-level, false = CTN-level
+    pub record_checks: Vec<RecordCheck>, // Using compiler's type
+    pub is_global: bool,
 }
 
 /// Resolved state with all variable references substituted
@@ -20,92 +24,24 @@ pub struct ResolvedState {
     pub is_global: bool,
 }
 
-/// Individual field within a state definition
-/// EBNF: state_field ::= field_name space data_type space operation space value_spec (space entity_check)? statement_end
+/// Individual field within a state definition (scanner working type)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateField {
-    /// Field name
     pub name: String,
-    /// Field data type
     pub data_type: DataType,
-    /// Operation to perform
     pub operation: Operation,
-    /// Value to compare against
     pub value: Value,
-    /// Optional entity check
     pub entity_check: Option<EntityCheck>,
 }
 
 /// Resolved state field with concrete value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedStateField {
-    /// Field name
     pub name: String,
-    /// Field data type
     pub data_type: DataType,
-    /// Operation to perform
     pub operation: Operation,
-    /// Resolved value to compare against
     pub value: ResolvedValue,
-    /// Optional entity check
     pub entity_check: Option<EntityCheck>,
-}
-
-/// Entity check for validation scope (only used in states)
-/// EBNF: entity_check ::= "all" | "at_least_one" | "none" | "only_one"
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EntityCheck {
-    All,        // all
-    AtLeastOne, // at_least_one
-    None,       // none
-    OnlyOne,    // only_one
-}
-
-impl EntityCheck {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "all" => Some(Self::All),
-            "at_least_one" => Some(Self::AtLeastOne),
-            "none" => Some(Self::None),
-            "only_one" => Some(Self::OnlyOne),
-
-            "All" => Some(Self::All),
-            "AtLeastOne" => Some(Self::AtLeastOne),
-            "None" => Some(Self::None),
-            "OnlyOne" => Some(Self::OnlyOne),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::AtLeastOne => "at_least_one",
-            Self::None => "none",
-            Self::OnlyOne => "only_one",
-        }
-    }
-
-    /// Check if this entity check expects entities to satisfy the condition
-    pub fn expects_satisfaction(&self) -> bool {
-        match self {
-            Self::All | Self::AtLeastOne | Self::OnlyOne => true,
-            Self::None => false,
-        }
-    }
-
-    /// Check if this entity check requires all entities to satisfy
-    pub fn requires_all_entities(&self) -> bool {
-        matches!(self, Self::All)
-    }
-}
-
-/// Record check for record datatype validation in states
-/// EBNF: record_check ::= "record" space data_type? statement_end record_content "record_end" statement_end
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RecordCheck {
-    pub data_type: Option<DataType>,
-    pub content: RecordContent,
 }
 
 /// Resolved record check with concrete data
@@ -115,39 +51,16 @@ pub struct ResolvedRecordCheck {
     pub content: ResolvedRecordContent,
 }
 
-/// Record content types for validation in states
-/// EBNF: record_content ::= direct_operation | nested_fields
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum RecordContent {
-    /// Direct operation on entire record
-    /// EBNF: direct_operation ::= operation space value_spec statement_end
-    Direct { operation: Operation, value: Value },
-    /// Nested field operations
-    /// EBNF: nested_fields ::= record_field+
-    Nested { fields: Vec<RecordField> },
-}
-
 /// Resolved record content with concrete values
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResolvedRecordContent {
-    /// Direct operation with resolved value
     Direct {
         operation: Operation,
         value: ResolvedValue,
     },
-    /// Nested fields with resolved values
-    Nested { fields: Vec<ResolvedRecordField> },
-}
-
-/// Record field specification for nested record validation in states
-/// EBNF: record_field ::= "field" space field_path space data_type space operation space value_spec (space entity_check)? statement_end
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RecordField {
-    pub path: FieldPath,
-    pub data_type: DataType,
-    pub operation: Operation,
-    pub value: Value,
-    pub entity_check: Option<EntityCheck>,
+    Nested {
+        fields: Vec<ResolvedRecordField>,
+    },
 }
 
 /// Resolved record field with concrete value
@@ -160,24 +73,10 @@ pub struct ResolvedRecordField {
     pub entity_check: Option<EntityCheck>,
 }
 
-/// State reference for referencing global states
-/// EBNF: state_reference ::= "STATE_REF" space state_identifier statement_end
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StateRef {
-    /// Referenced state ID (must be global)
-    pub state_id: String,
-}
+// ============================================================================
+// IMPLEMENTATIONS - Scanner working types
+// ============================================================================
 
-impl StateRef {
-    /// Create a new state reference
-    pub fn new(state_id: impl Into<String>) -> Self {
-        Self {
-            state_id: state_id.into(),
-        }
-    }
-}
-
-// Utility implementations
 impl StateDeclaration {
     /// Check if this state has any variable references in its fields or record checks
     pub fn has_variable_references(&self) -> bool {
@@ -232,18 +131,32 @@ impl StateDeclaration {
                 .iter()
                 .any(|record| record.has_entity_checks())
     }
+
+    /// Convert from compiler AST node
+    pub fn from_ast_node(node: &esp_compiler::grammar::ast::nodes::StateDefinition) -> Self {
+        Self {
+            identifier: node.id.clone(),
+            fields: node
+                .fields
+                .iter()
+                .map(|f| StateField::from_ast_field(f))
+                .collect(),
+            record_checks: node.record_checks.clone(),
+            is_global: node.is_global,
+        }
+    }
 }
 
 impl StateField {
     /// Check if this field has variable references
     pub fn has_variable_references(&self) -> bool {
-        self.value.has_variable_reference()
+        matches!(self.value, Value::Variable(_))
     }
 
     /// Get variable references from this field
     pub fn get_variable_references(&self) -> Vec<String> {
-        if let Some(var_name) = self.value.get_variable_name() {
-            vec![var_name.to_string()]
+        if let Value::Variable(var_name) = &self.value {
+            vec![var_name.clone()]
         } else {
             Vec::new()
         }
@@ -253,42 +166,66 @@ impl StateField {
     pub fn has_entity_check(&self) -> bool {
         self.entity_check.is_some()
     }
+
+    /// Convert from compiler AST field
+    pub fn from_ast_field(field: &esp_compiler::grammar::ast::nodes::StateField) -> Self {
+        Self {
+            name: field.name.clone(),
+            data_type: field.data_type,
+            operation: field.operation,
+            value: field.value.clone(),
+            entity_check: field.entity_check,
+        }
+    }
 }
 
-impl RecordCheck {
-    /// Check if this record check has variable references
-    pub fn has_variable_references(&self) -> bool {
+// ============================================================================
+// EXTENSION TRAITS - For compiler types used in scanner
+// ============================================================================
+
+/// Extension trait for compiler's RecordCheck to add scanner-specific helpers
+pub trait RecordCheckExt {
+    fn has_variable_references(&self) -> bool;
+    fn get_variable_references(&self) -> Vec<String>;
+    fn has_entity_checks(&self) -> bool;
+}
+
+impl RecordCheckExt for RecordCheck {
+    fn has_variable_references(&self) -> bool {
         self.content.has_variable_references()
     }
 
-    /// Get variable references from this record check
-    pub fn get_variable_references(&self) -> Vec<String> {
+    fn get_variable_references(&self) -> Vec<String> {
         self.content.get_variable_references()
     }
 
-    /// Check if this record check has entity checks
-    pub fn has_entity_checks(&self) -> bool {
+    fn has_entity_checks(&self) -> bool {
         self.content.has_entity_checks()
     }
 }
 
-impl RecordContent {
-    /// Check if this record content has variable references
-    pub fn has_variable_references(&self) -> bool {
+/// Extension trait for compiler's RecordContent
+pub trait RecordContentExt {
+    fn has_variable_references(&self) -> bool;
+    fn get_variable_references(&self) -> Vec<String>;
+    fn has_entity_checks(&self) -> bool;
+}
+
+impl RecordContentExt for RecordContent {
+    fn has_variable_references(&self) -> bool {
         match self {
-            RecordContent::Direct { value, .. } => value.has_variable_reference(),
+            RecordContent::Direct { value, .. } => matches!(value, Value::Variable(_)),
             RecordContent::Nested { fields } => fields
                 .iter()
-                .any(|field| field.value.has_variable_reference()),
+                .any(|field| matches!(field.value, Value::Variable(_))),
         }
     }
 
-    /// Get variable references from this record content
-    pub fn get_variable_references(&self) -> Vec<String> {
+    fn get_variable_references(&self) -> Vec<String> {
         match self {
             RecordContent::Direct { value, .. } => {
-                if let Some(var_name) = value.get_variable_name() {
-                    vec![var_name.to_string()]
+                if let Value::Variable(var_name) = value {
+                    vec![var_name.clone()]
                 } else {
                     Vec::new()
                 }
@@ -296,8 +233,8 @@ impl RecordContent {
             RecordContent::Nested { fields } => {
                 let mut refs = Vec::new();
                 for field in fields {
-                    if let Some(var_name) = field.value.get_variable_name() {
-                        refs.push(var_name.to_string());
+                    if let Value::Variable(var_name) = &field.value {
+                        refs.push(var_name.clone());
                     }
                 }
                 refs.sort();
@@ -307,10 +244,9 @@ impl RecordContent {
         }
     }
 
-    /// Check if this record content has entity checks
-    pub fn has_entity_checks(&self) -> bool {
+    fn has_entity_checks(&self) -> bool {
         match self {
-            RecordContent::Direct { .. } => false, // Direct operations don't have entity checks
+            RecordContent::Direct { .. } => false,
             RecordContent::Nested { fields } => {
                 fields.iter().any(|field| field.entity_check.is_some())
             }
@@ -318,67 +254,224 @@ impl RecordContent {
     }
 }
 
-impl RecordField {
-    /// Check if this record field has variable references
-    pub fn has_variable_references(&self) -> bool {
-        self.value.has_variable_reference()
+/// Extension trait for compiler's RecordField
+pub trait RecordFieldExt {
+    fn has_variable_references(&self) -> bool;
+    fn get_variable_references(&self) -> Vec<String>;
+    fn has_entity_check(&self) -> bool;
+}
+
+impl RecordFieldExt for RecordField {
+    fn has_variable_references(&self) -> bool {
+        matches!(self.value, Value::Variable(_))
     }
 
-    /// Get variable references from this record field
-    pub fn get_variable_references(&self) -> Vec<String> {
-        if let Some(var_name) = self.value.get_variable_name() {
-            vec![var_name.to_string()]
+    fn get_variable_references(&self) -> Vec<String> {
+        if let Value::Variable(var_name) = &self.value {
+            vec![var_name.clone()]
         } else {
             Vec::new()
         }
     }
 
-    /// Check if this record field has an entity check
-    pub fn has_entity_check(&self) -> bool {
+    fn has_entity_check(&self) -> bool {
         self.entity_check.is_some()
     }
 }
 
-// Display implementations
-impl std::fmt::Display for EntityCheck {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
+// ============================================================================
+// DISPLAY IMPLEMENTATIONS
+// ============================================================================
 
 impl std::fmt::Display for StateField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Helper to format the value
+        let value_str = match &self.value {
+            Value::String(s) => format!("`{}`", s),
+            Value::Variable(v) => format!("VAR {}", v),
+            Value::Integer(i) => i.to_string(),
+            Value::Float(fl) => fl.to_string(),
+            Value::Boolean(b) => b.to_string(),
+        };
+
+        // Format with or without entity check
         if let Some(entity_check) = &self.entity_check {
+            // Convert EntityCheck to string inline (can't impl Display due to orphan rules)
+            let entity_str = match entity_check {
+                EntityCheck::All => "ALL",
+                EntityCheck::AtLeastOne => "AT_LEAST_ONE",
+                EntityCheck::None => "NONE",
+                EntityCheck::OnlyOne => "ONLY_ONE",
+            };
+
             write!(
                 f,
                 "{} {} {} {} {}",
-                self.name,
-                self.data_type,
-                self.operation,
-                match &self.value {
-                    Value::String(s) => format!("`{}`", s),
-                    Value::Variable(v) => format!("VAR {}", v),
-                    Value::Integer(i) => i.to_string(),
-                    Value::Float(fl) => fl.to_string(),
-                    Value::Boolean(b) => b.to_string(),
-                },
-                entity_check
+                self.name, self.data_type, self.operation, value_str, entity_str
             )
         } else {
             write!(
                 f,
                 "{} {} {} {}",
-                self.name,
-                self.data_type,
-                self.operation,
-                match &self.value {
-                    Value::String(s) => format!("`{}`", s),
-                    Value::Variable(v) => format!("VAR {}", v),
-                    Value::Integer(i) => i.to_string(),
-                    Value::Float(fl) => fl.to_string(),
-                    Value::Boolean(b) => b.to_string(),
-                }
+                self.name, self.data_type, self.operation, value_str
             )
         }
+    }
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use esp_compiler::grammar::ast::nodes::{
+        DataType as AstDataType, Operation as AstOperation, StateDefinition as AstState,
+        StateField as AstField, Value as AstValue,
+    };
+
+    #[test]
+    fn test_state_ast_conversion_global() {
+        // Create compiler AST node for global state
+        let ast_state = AstState {
+            id: "test_state".to_string(),
+            fields: vec![AstField {
+                name: "field1".to_string(),
+                data_type: AstDataType::String,
+                operation: AstOperation::Equals,
+                value: AstValue::String("value1".to_string()),
+                entity_check: None,
+                span: None,
+            }],
+            record_checks: vec![],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_state = StateDeclaration::from_ast_node(&ast_state);
+
+        // Verify
+        assert_eq!(scanner_state.identifier, "test_state");
+        assert_eq!(scanner_state.fields.len(), 1);
+        assert!(scanner_state.is_global);
+        assert!(!scanner_state.is_empty());
+    }
+
+    #[test]
+    fn test_state_ast_conversion_local() {
+        // Create compiler AST node for local state (in CTN)
+        let ast_state = AstState {
+            id: "local_state".to_string(),
+            fields: vec![AstField {
+                name: "check_field".to_string(),
+                data_type: AstDataType::Int,
+                operation: AstOperation::GreaterThan,
+                value: AstValue::Integer(100),
+                entity_check: None,
+                span: None,
+            }],
+            record_checks: vec![],
+            is_global: false,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_state = StateDeclaration::from_ast_node(&ast_state);
+
+        // Verify
+        assert_eq!(scanner_state.identifier, "local_state");
+        assert!(!scanner_state.is_global);
+    }
+
+    #[test]
+    fn test_state_field_conversion() {
+        // Create compiler AST field
+        let ast_field = AstField {
+            name: "test_field".to_string(),
+            data_type: AstDataType::Boolean,
+            operation: AstOperation::Equals,
+            value: AstValue::Boolean(true),
+            entity_check: None,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_field = StateField::from_ast_field(&ast_field);
+
+        // Verify
+        assert_eq!(scanner_field.name, "test_field");
+        assert_eq!(scanner_field.data_type, AstDataType::Boolean);
+        assert_eq!(scanner_field.operation, AstOperation::Equals);
+        assert!(!scanner_field.has_variable_references());
+    }
+
+    #[test]
+    fn test_state_with_variable_references() {
+        // Create state with variable reference
+        let ast_state = AstState {
+            id: "var_state".to_string(),
+            fields: vec![AstField {
+                name: "dynamic_field".to_string(),
+                data_type: AstDataType::String,
+                operation: AstOperation::Equals,
+                value: AstValue::Variable("some_var".to_string()),
+                entity_check: None,
+                span: None,
+            }],
+            record_checks: vec![],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert
+        let scanner_state = StateDeclaration::from_ast_node(&ast_state);
+
+        // Verify
+        assert!(scanner_state.has_variable_references());
+        let refs = scanner_state.get_variable_references();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0], "some_var");
+    }
+
+    #[test]
+    fn test_state_multiple_fields() {
+        // Create state with multiple fields
+        let ast_state = AstState {
+            id: "multi_field_state".to_string(),
+            fields: vec![
+                AstField {
+                    name: "field1".to_string(),
+                    data_type: AstDataType::String,
+                    operation: AstOperation::Equals,
+                    value: AstValue::String("test".to_string()),
+                    entity_check: None,
+                    span: None,
+                },
+                AstField {
+                    name: "field2".to_string(),
+                    data_type: AstDataType::Int,
+                    operation: AstOperation::GreaterThan,
+                    value: AstValue::Integer(42),
+                    entity_check: None,
+                    span: None,
+                },
+            ],
+            record_checks: vec![],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert
+        let scanner_state = StateDeclaration::from_ast_node(&ast_state);
+
+        // Verify
+        assert_eq!(scanner_state.fields.len(), 2);
+        assert_eq!(scanner_state.element_count(), 2);
+
+        let field_names = scanner_state.get_field_names();
+        assert!(field_names.contains(&"field1".to_string()));
+        assert!(field_names.contains(&"field2".to_string()));
     }
 }

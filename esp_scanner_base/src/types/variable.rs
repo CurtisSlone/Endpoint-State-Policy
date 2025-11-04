@@ -1,7 +1,8 @@
-use super::common::{DataType, ResolvedValue, Value};
+use super::common::{DataType, ResolvedValue, Value, ValueExt};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-/// Resolved variable with concrete value
+/// Resolved variable with concrete value (scanner-specific output type)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedVariable {
     pub identifier: String,
@@ -9,7 +10,7 @@ pub struct ResolvedVariable {
     pub value: ResolvedValue,
 }
 
-/// Variable declaration from ICS definition
+/// Variable declaration from ESP definition (scanner working type)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VariableDeclaration {
     pub name: String,
@@ -29,6 +30,7 @@ impl ResolvedVariable {
 
     /// Check if the resolved value matches the declared data type
     pub fn is_type_consistent(&self) -> bool {
+        use super::common::DataTypeExt;
         self.data_type.matches_resolved_value(&self.value)
     }
 
@@ -70,11 +72,32 @@ impl VariableDeclaration {
         }
     }
 
+    /// Convert from compiler AST node
+    ///
+    /// # Arguments
+    /// * `node` - Variable declaration node from esp_compiler AST
+    ///
+    /// # Example
+    /// ```ignore
+    /// use esp_compiler::grammar::ast::nodes::VariableDeclaration as AstVar;
+    ///
+    /// let ast_var = AstVar { ... };
+    /// let scanner_var = VariableDeclaration::from_ast_node(&ast_var);
+    /// ```
+    pub fn from_ast_node(node: &esp_compiler::grammar::ast::nodes::VariableDeclaration) -> Self {
+        Self {
+            name: node.name.clone(),
+            data_type: node.data_type,
+            initial_value: node.initial_value.clone(),
+        }
+    }
+
     /// Check if this variable has an initial value
     pub fn has_initial_value(&self) -> bool {
         self.initial_value.is_some()
     }
 
+    /// Check if this is a computed variable (no initial value)
     pub fn is_computed(&self) -> bool {
         self.initial_value.is_none()
     }
@@ -82,45 +105,44 @@ impl VariableDeclaration {
     /// Check if this variable references another variable in its initial value
     pub fn has_variable_reference(&self) -> bool {
         match &self.initial_value {
-            Some(Value::Variable(_)) => true,
-            _ => false,
+            Some(value) => value.has_variable_reference(),
+            None => false,
         }
     }
 
     /// Get the referenced variable name if this variable references another variable
     pub fn get_variable_reference(&self) -> Option<&str> {
         match &self.initial_value {
-            Some(Value::Variable(var_name)) => Some(var_name),
-            _ => None,
+            Some(value) => value.get_variable_name(),
+            None => None,
         }
     }
 
     /// Check if this variable is initialized with a literal value (not a reference)
     pub fn has_literal_initial_value(&self) -> bool {
         match &self.initial_value {
-            Some(Value::Variable(_)) => false, // Reference, not literal
-            Some(_) => true,                   // Literal value
-            None => false,                     // No initial value
+            Some(value) => !value.has_variable_reference(),
+            None => false,
         }
     }
 
     /// Check if this variable is initialized with a variable reference
     pub fn has_variable_reference_initialization(&self) -> bool {
-        matches!(self.initial_value, Some(Value::Variable(_)))
+        self.has_variable_reference()
     }
 
     /// Get the initialization dependency (variable name this depends on)
     pub fn get_initialization_dependency(&self) -> Option<&str> {
-        match &self.initial_value {
-            Some(Value::Variable(var_name)) => Some(var_name),
-            _ => None,
-        }
+        self.get_variable_reference()
     }
 }
 
-// Display implementations
+// ============================================================================
+// DISPLAY IMPLEMENTATIONS
+// ============================================================================
+
 impl std::fmt::Display for ResolvedVariable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}: {} = {:?}",
@@ -135,5 +157,99 @@ impl std::fmt::Display for VariableDeclaration {
             Some(value) => write!(f, "VAR {} {} {:?}", self.name, self.data_type, value),
             None => write!(f, "VAR {} {}", self.name, self.data_type),
         }
+    }
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use esp_compiler::grammar::ast::nodes::{
+        DataType as AstDataType, Value as AstValue, VariableDeclaration as AstVar,
+    };
+
+    #[test]
+    fn test_variable_ast_conversion_with_literal() {
+        // Create compiler AST node
+        let ast_var = AstVar {
+            name: "test_var".to_string(),
+            data_type: AstDataType::String,
+            initial_value: Some(AstValue::String("hello".to_string())),
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_var = VariableDeclaration::from_ast_node(&ast_var);
+
+        // Verify
+        assert_eq!(scanner_var.name, "test_var");
+        assert_eq!(scanner_var.data_type, AstDataType::String);
+        assert!(scanner_var.has_literal_initial_value());
+        assert!(!scanner_var.is_computed());
+        assert!(!scanner_var.has_variable_reference());
+    }
+
+    #[test]
+    fn test_variable_ast_conversion_with_variable_reference() {
+        // Create compiler AST node with variable reference
+        let ast_var = AstVar {
+            name: "derived_var".to_string(),
+            data_type: AstDataType::Int,
+            initial_value: Some(AstValue::Variable("source_var".to_string())),
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_var = VariableDeclaration::from_ast_node(&ast_var);
+
+        // Verify
+        assert_eq!(scanner_var.name, "derived_var");
+        assert!(scanner_var.has_variable_reference());
+        assert_eq!(scanner_var.get_variable_reference(), Some("source_var"));
+        assert!(!scanner_var.has_literal_initial_value());
+        assert!(!scanner_var.is_computed());
+    }
+
+    #[test]
+    fn test_variable_ast_conversion_computed() {
+        // Create compiler AST node with no initial value (computed)
+        let ast_var = AstVar {
+            name: "computed_var".to_string(),
+            data_type: AstDataType::String,
+            initial_value: None,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_var = VariableDeclaration::from_ast_node(&ast_var);
+
+        // Verify
+        assert_eq!(scanner_var.name, "computed_var");
+        assert!(scanner_var.is_computed());
+        assert!(!scanner_var.has_initial_value());
+        assert!(!scanner_var.has_variable_reference());
+    }
+
+    #[test]
+    fn test_variable_categorization() {
+        // Literal
+        let literal =
+            VariableDeclaration::new("lit".to_string(), DataType::Int, Some(Value::Integer(42)));
+        assert!(literal.has_literal_initial_value());
+
+        // Reference
+        let reference = VariableDeclaration::new(
+            "ref".to_string(),
+            DataType::Int,
+            Some(Value::Variable("other".to_string())),
+        );
+        assert!(reference.has_variable_reference());
+
+        // Computed
+        let computed = VariableDeclaration::new("comp".to_string(), DataType::String, None);
+        assert!(computed.is_computed());
     }
 }

@@ -1,4 +1,3 @@
-use crate::ffi::common::IcsError;
 use crate::types::common::DataType;
 use crate::types::error::FieldResolutionError;
 

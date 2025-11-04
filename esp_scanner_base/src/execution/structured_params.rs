@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_from_smoke_test() {
-        // From smoke-test.ics complex_object parameters
+        // From smoke-test.esp complex_object parameters
         let fields = vec![
             ("CommandName".to_string(), "Get-SecurityAudit".to_string()),
             (

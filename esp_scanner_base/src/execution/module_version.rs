@@ -3,10 +3,10 @@
 //! Provides version compatibility checking for DataCollectors.
 //! Ensures collectors can handle the requested module versions.
 use crate::execution::ExecutionError;
-use crate::ffi::logging::{log_consumer_debug, log_consumer_info};
 use crate::strategies::CtnDataCollector;
 use crate::types::execution_context::ExecutableObject;
-use crate::types::object::ModuleField;
+use crate::types::ModuleField;
+use esp_compiler::{log_debug, log_info};
 use std::cmp::Ordering;
 
 /// Semantic version comparison result
@@ -120,16 +120,16 @@ impl ModuleSpec {
 /// ```ignore
 /// impl DataCollector for MyCollector {
 ///     // ... existing methods ...
-///     
+///
 ///     fn supports_module(&self, name: &str, version: &str) -> bool {
 ///         if name != "MyModule" {
 ///             return false;
 ///         }
-///         
+///
 ///         // Parse versions
 ///         let requested = SemanticVersion::parse(version)?;
 ///         let supported = SemanticVersion::parse("2.1.0")?; // Your collector's version
-///         
+///
 ///         supported.is_compatible_with(&requested)
 ///     }
 /// }
@@ -155,7 +155,7 @@ impl VersionAwareCollectorRegistry {
     ///                 return Ok(collector.as_ref());
     ///             }
     ///         }
-    ///         
+    ///
     ///         Err(StrategyError::Configuration {
     ///             message: format!(
     ///                 "No collector found for module '{}' version '{}'",
@@ -175,7 +175,6 @@ pub fn extract_module_spec(
     object: &crate::types::execution_context::ExecutableObject,
 ) -> Option<ModuleSpec> {
     use crate::types::execution_context::ExecutableObjectElement;
-    use crate::types::object::ModuleField;
 
     let mut name = None;
     let mut version = None;
@@ -202,33 +201,36 @@ pub fn extract_module_spec(
 }
 
 /// Validate module compatibility before collection
-
 pub fn validate_module_compatibility(
     collector: &dyn CtnDataCollector,
     object: &ExecutableObject,
 ) -> Result<(), ExecutionError> {
-    // Extract module specifications from the object
-    let module_specs = object.get_module_specs();
+    // Extract module specs from object
+    use crate::types::execution_context::ExecutableObjectElement;
+
+    let mut module_specs: Vec<(ModuleField, String)> = Vec::new();
+    for element in &object.elements {
+        if let ExecutableObjectElement::Module { field, value } = element {
+            module_specs.push((field.clone(), value.clone()));
+        }
+    }
 
     if module_specs.is_empty() {
         return Ok(()); // No module requirements
     }
 
     for (field, value) in module_specs {
-        let _ = log_consumer_debug(
-            "Checking module requirement",
-            &[
-                ("module_field", field.as_str()),
-                ("module_value", value),
-                ("collector_id", collector.collector_id()),
-            ],
+        log_debug!("Checking module requirement",
+            "module_field" => format!("{:?}", field).as_str(),
+            "module_value" => value.as_str(),
+            "collector_id" => collector.collector_id()
         );
 
         // For now, just log - module support not yet implemented in trait
-        if field == ModuleField::ModuleVersion {
-            let _ = log_consumer_info(
-                "Module version check skipped - trait support not implemented",
-                &[("version", value), ("collector", collector.collector_id())],
+        if matches!(field, ModuleField::ModuleVersion) {
+            log_info!("Module version check skipped - trait support not implemented",
+                "version" => value.as_str(),
+                "collector" => collector.collector_id()
             );
         }
     }

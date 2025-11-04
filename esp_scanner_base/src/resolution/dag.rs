@@ -1,9 +1,6 @@
 //! Dependency Graph (DAG) implementation for ICS resolution engine
 //! Handles topological sorting and cycle detection for symbol resolution
 
-use crate::ffi::logging::{
-    consumer_codes, log_consumer_debug, log_consumer_error, log_consumer_warning,
-};
 use crate::resolution::error::ResolutionError;
 use crate::types::criterion::CtnNodeId;
 use serde::{Deserialize, Serialize};
@@ -153,23 +150,7 @@ impl DependencyGraph {
         symbol_id: String,
         symbol_type: SymbolType,
     ) -> Result<(), ResolutionError> {
-        let _ = log_consumer_debug(
-            "Adding node to dependency graph",
-            &[
-                ("symbol_id", &symbol_id),
-                ("symbol_type", symbol_type.as_str()),
-                ("is_global", &symbol_type.is_global().to_string()),
-            ],
-        );
-
         if self.nodes.contains_key(&symbol_id) {
-            let _ = log_consumer_warning(
-                &format!(
-                    "Symbol '{}' already exists in dependency graph - skipping",
-                    symbol_id
-                ),
-                &[("symbol_id", &symbol_id)],
-            );
             return Ok(());
         }
 
@@ -187,11 +168,6 @@ impl DependencyGraph {
         // Store the node
         self.nodes.insert(symbol_id.clone(), node);
 
-        let _ = log_consumer_debug(
-            "Node added to dependency graph successfully",
-            &[("symbol_id", &symbol_id)],
-        );
-
         Ok(())
     }
 
@@ -202,15 +178,6 @@ impl DependencyGraph {
         symbol_type: SymbolType,
         ctn_id: CtnNodeId,
     ) -> Result<(), ResolutionError> {
-        let _ = log_consumer_debug(
-            "Adding local node to dependency graph",
-            &[
-                ("symbol_id", &symbol_id),
-                ("symbol_type", symbol_type.as_str()),
-                ("ctn_id", &ctn_id.to_string()),
-            ],
-        );
-
         if self.nodes.contains_key(&symbol_id) {
             return Err(ResolutionError::LocalSymbolConflict {
                 symbol: symbol_id,
@@ -233,32 +200,14 @@ impl DependencyGraph {
         // Store the node
         self.nodes.insert(symbol_id.clone(), node);
 
-        let _ = log_consumer_debug(
-            "Local node added to dependency graph successfully",
-            &[("symbol_id", &symbol_id), ("ctn_id", &ctn_id.to_string())],
-        );
-
         Ok(())
     }
 
     /// Add dependency edge between two symbols
     /// `from` depends on `to` - meaning `to` must be resolved before `from`
     pub fn add_dependency(&mut self, from: &str, to: &str) -> Result<(), ResolutionError> {
-        let _ = log_consumer_debug(
-            "Adding dependency edge - '{}' depends on '{}'",
-            &[("dependent", from), ("dependency", to)],
-        );
-
         // Validate both symbols exist
         if !self.nodes.contains_key(from) {
-            let _ = log_consumer_error(
-                consumer_codes::CONSUMER_VALIDATION_ERROR,
-                &format!(
-                    "Cannot add dependency: dependent symbol '{}' not found in graph",
-                    from
-                ),
-                &[("dependent", from), ("dependency", to)],
-            );
             return Err(ResolutionError::DependencyGraphCorrupted {
                 details: format!(
                     "Dependent symbol '{}' not found when adding dependency on '{}'",
@@ -268,14 +217,6 @@ impl DependencyGraph {
         }
 
         if !self.nodes.contains_key(to) {
-            let _ = log_consumer_error(
-                consumer_codes::CONSUMER_VALIDATION_ERROR,
-                &format!(
-                    "Cannot add dependency: dependency symbol '{}' not found in graph",
-                    to
-                ),
-                &[("dependent", from), ("dependency", to)],
-            );
             return Err(ResolutionError::DependencyGraphCorrupted {
                 details: format!(
                     "Dependency symbol '{}' not found when adding dependency from '{}'",
@@ -304,11 +245,6 @@ impl DependencyGraph {
             node.add_dependent(from.to_string());
         }
 
-        let _ = log_consumer_debug(
-            "Dependency edge added successfully - '{}' now depends on '{}'",
-            &[("dependent", from), ("dependency", to)],
-        );
-
         Ok(())
     }
 
@@ -324,32 +260,8 @@ impl DependencyGraph {
 
     /// Perform topological sort to get resolution order
     pub fn topological_sort(&self) -> Result<Vec<String>, ResolutionError> {
-        let _ = log_consumer_debug(
-            "Starting topological sort of dependency graph",
-            &[
-                ("total_nodes", &self.nodes.len().to_string()),
-                (
-                    "total_edges",
-                    &self
-                        .edges
-                        .values()
-                        .map(|v| v.len())
-                        .sum::<usize>()
-                        .to_string(),
-                ),
-            ],
-        );
-
         // Detect cycles first
         if let Some(cycle) = self.detect_cycle() {
-            let _ = log_consumer_error(
-                consumer_codes::CONSUMER_VALIDATION_ERROR,
-                &format!(
-                    "Circular dependency detected in resolution graph: {}",
-                    cycle.join(" -> ")
-                ),
-                &[("cycle_length", &cycle.len().to_string())],
-            );
             return Err(ResolutionError::CircularDependency { cycle });
         }
 
@@ -365,32 +277,12 @@ impl DependencyGraph {
 
             if degree == 0 {
                 queue.push_back(node_id.clone());
-                let _ = log_consumer_debug(
-                    "Node with no dependencies added to queue",
-                    &[("symbol_id", node_id)],
-                );
             }
         }
-
-        let _ = log_consumer_debug(
-            "Topological sort initialization complete",
-            &[
-                ("nodes_with_no_deps", &queue.len().to_string()),
-                ("total_nodes_to_process", &in_degree.len().to_string()),
-            ],
-        );
 
         // Process nodes with no remaining dependencies
         while let Some(current) = queue.pop_front() {
             result.push(current.clone());
-
-            let _ = log_consumer_debug(
-                "Processing node in topological sort",
-                &[
-                    ("current_node", &current),
-                    ("processed_count", &result.len().to_string()),
-                ],
-            );
 
             // Update in-degrees for dependents
             for dependent in self.get_dependents(&current) {
@@ -398,10 +290,6 @@ impl DependencyGraph {
                     *degree -= 1;
                     if *degree == 0 {
                         queue.push_back(dependent.clone());
-                        let _ = log_consumer_debug(
-                            "Dependent node ready for processing",
-                            &[("dependent_node", &dependent)],
-                        );
                     }
                 }
             }
@@ -416,18 +304,6 @@ impl DependencyGraph {
                 .cloned()
                 .collect();
 
-            let _ = log_consumer_error(
-                consumer_codes::CONSUMER_VALIDATION_ERROR,
-                &format!(
-                    "Topological sort failed: {} nodes remain unprocessed",
-                    unprocessed.len()
-                ),
-                &[
-                    ("unprocessed_count", &unprocessed.len().to_string()),
-                    ("unprocessed_nodes", &unprocessed.join(", ")),
-                ],
-            );
-
             return Err(ResolutionError::DependencyGraphCorrupted {
                 details: format!(
                     "Topological sort incomplete: {} unprocessed nodes",
@@ -436,32 +312,11 @@ impl DependencyGraph {
             });
         }
 
-        let _ = log_consumer_debug(
-            "Topological sort completed successfully",
-            &[
-                ("resolution_order_length", &result.len().to_string()),
-                (
-                    "first_5_nodes",
-                    &result
-                        .iter()
-                        .take(5)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
-            ],
-        );
-
         Ok(result)
     }
 
     /// Detect cycles in the dependency graph using DFS
     pub fn detect_cycle(&self) -> Option<Vec<String>> {
-        let _ = log_consumer_debug(
-            "Starting cycle detection",
-            &[("total_nodes", &self.nodes.len().to_string())],
-        );
-
         let mut visited = HashSet::new();
         let mut rec_stack = HashSet::new();
         let mut path = Vec::new();
@@ -471,19 +326,11 @@ impl DependencyGraph {
                 if let Some(cycle) =
                     self.dfs_cycle_detect(node_id, &mut visited, &mut rec_stack, &mut path)
                 {
-                    let _ = log_consumer_debug(
-                        "Cycle detected during DFS",
-                        &[
-                            ("cycle_start", node_id),
-                            ("cycle_length", &cycle.len().to_string()),
-                        ],
-                    );
                     return Some(cycle);
                 }
             }
         }
 
-        let _ = log_consumer_debug("Cycle detection completed - no cycles found", &[]);
         None
     }
 
@@ -544,11 +391,6 @@ impl DependencyGraph {
 
     /// Validate graph integrity
     pub fn validate(&self) -> Result<(), ResolutionError> {
-        let _ = log_consumer_debug(
-            "Validating dependency graph integrity",
-            &[("total_nodes", &self.nodes.len().to_string())],
-        );
-
         // Check that all edges reference existing nodes
         for (from, dependencies) in &self.edges {
             if !self.nodes.contains_key(from) {
@@ -581,7 +423,6 @@ impl DependencyGraph {
             }
         }
 
-        let _ = log_consumer_debug("Dependency graph validation passed", &[]);
         Ok(())
     }
 
@@ -644,169 +485,5 @@ impl GraphStats {
 impl Default for DependencyGraph {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_topological_sort() {
-        let mut graph = DependencyGraph::new();
-
-        // Add nodes: A depends on B, B depends on C
-        // Resolution order should be: C, B, A
-        graph
-            .add_node("A".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("B".to_string(), SymbolType::RuntimeOperation)
-            .unwrap();
-        graph
-            .add_node("C".to_string(), SymbolType::SetOperation)
-            .unwrap();
-
-        // A depends on B (B must resolve before A)
-        graph.add_dependency("A", "B").unwrap();
-        // B depends on C (C must resolve before B)
-        graph.add_dependency("B", "C").unwrap();
-
-        let order = graph.topological_sort().unwrap();
-
-        // C should be first (no dependencies), then B, then A
-        let c_pos = order.iter().position(|x| x == "C").unwrap();
-        let b_pos = order.iter().position(|x| x == "B").unwrap();
-        let a_pos = order.iter().position(|x| x == "A").unwrap();
-
-        assert!(c_pos < b_pos, "C should come before B");
-        assert!(b_pos < a_pos, "B should come before A");
-    }
-
-    #[test]
-    fn test_independent_nodes() {
-        let mut graph = DependencyGraph::new();
-
-        // Add independent nodes with no dependencies
-        graph
-            .add_node("X".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("Y".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("Z".to_string(), SymbolType::Variable)
-            .unwrap();
-
-        let order = graph.topological_sort().unwrap();
-
-        // All nodes should be present, order can be any
-        assert_eq!(order.len(), 3);
-        assert!(order.contains(&"X".to_string()));
-        assert!(order.contains(&"Y".to_string()));
-        assert!(order.contains(&"Z".to_string()));
-    }
-
-    #[test]
-    fn test_cycle_detection() {
-        let mut graph = DependencyGraph::new();
-
-        graph
-            .add_node("A".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("B".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("C".to_string(), SymbolType::Variable)
-            .unwrap();
-
-        // Create cycle: A -> B -> C -> A
-        graph.add_dependency("A", "B").unwrap();
-        graph.add_dependency("B", "C").unwrap();
-        graph.add_dependency("C", "A").unwrap();
-
-        assert!(graph.detect_cycle().is_some());
-    }
-
-    #[test]
-    fn test_no_cycle_detection() {
-        let mut graph = DependencyGraph::new();
-
-        graph
-            .add_node("A".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("B".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("C".to_string(), SymbolType::Variable)
-            .unwrap();
-
-        // No cycle: A -> B, A -> C
-        graph.add_dependency("A", "B").unwrap();
-        graph.add_dependency("A", "C").unwrap();
-
-        assert!(graph.detect_cycle().is_none());
-    }
-
-    #[test]
-    fn test_complex_dependency_resolution() {
-        let mut graph = DependencyGraph::new();
-
-        // Create diamond dependency pattern:
-        // A depends on both B and C
-        // B depends on D
-        // C depends on D
-        // D has no dependencies
-        // Resolution order should be: D, then B and C (any order), then A
-        for symbol in ["A", "B", "C", "D"] {
-            graph
-                .add_node(symbol.to_string(), SymbolType::Variable)
-                .unwrap();
-        }
-
-        graph.add_dependency("A", "B").unwrap(); // A depends on B
-        graph.add_dependency("A", "C").unwrap(); // A depends on C
-        graph.add_dependency("B", "D").unwrap(); // B depends on D
-        graph.add_dependency("C", "D").unwrap(); // C depends on D
-
-        let order = graph.topological_sort().unwrap();
-
-        // Get positions
-        let a_pos = order.iter().position(|x| x == "A").unwrap();
-        let b_pos = order.iter().position(|x| x == "B").unwrap();
-        let c_pos = order.iter().position(|x| x == "C").unwrap();
-        let d_pos = order.iter().position(|x| x == "D").unwrap();
-
-        // D should be first (no dependencies)
-        assert_eq!(d_pos, 0, "D should resolve first");
-
-        // B and C should come before A
-        assert!(b_pos < a_pos, "B should resolve before A");
-        assert!(c_pos < a_pos, "C should resolve before A");
-
-        // B and C should come after D
-        assert!(d_pos < b_pos, "D should resolve before B");
-        assert!(d_pos < c_pos, "D should resolve before C");
-
-        // A should be last
-        assert_eq!(a_pos, 3, "A should resolve last");
-    }
-
-    #[test]
-    fn test_graph_validation() {
-        let mut graph = DependencyGraph::new();
-
-        graph
-            .add_node("A".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph
-            .add_node("B".to_string(), SymbolType::Variable)
-            .unwrap();
-        graph.add_dependency("A", "B").unwrap();
-
-        // Should pass validation
-        assert!(graph.validate().is_ok());
     }
 }

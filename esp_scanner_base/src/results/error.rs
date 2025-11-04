@@ -6,7 +6,7 @@ pub enum ResultGenerationError {
     /// Failed to generate scan result from resolution context
     ScanResultGenerationFailed { scan_id: String, cause: String },
 
-    /// Failed to extract metadata from ICS definition
+    /// Failed to extract metadata from ESP definition
     MetadataExtractionFailed {
         scan_id: String,
         missing_field: String,
@@ -117,8 +117,8 @@ pub enum ResultGenerationError {
         end_time: String,
     },
 
-    /// ICS metadata validation failed during result generation
-    IcsMetadataValidationFailed {
+    /// ESP metadata validation failed during result generation
+    EspMetadataValidationFailed {
         scan_id: String,
         validation_errors: Vec<String>,
     },
@@ -291,9 +291,9 @@ impl ResultGenerationError {
         }
     }
 
-    /// Create ICS metadata validation error
-    pub fn ics_metadata_validation_failed(scan_id: &str, validation_errors: Vec<String>) -> Self {
-        Self::IcsMetadataValidationFailed {
+    /// Create ESP metadata validation error
+    pub fn esp_metadata_validation_failed(scan_id: &str, validation_errors: Vec<String>) -> Self {
+        Self::EspMetadataValidationFailed {
             scan_id: scan_id.to_string(),
             validation_errors,
         }
@@ -437,7 +437,7 @@ impl std::fmt::Display for ResultGenerationError {
                 errors,
                 validation_error,
             } => {
-                write!(f, "Invalid criteria counts for scan '{}' (total:{}, passed:{}, failed:{}, errors:{}): {}", 
+                write!(f, "Invalid criteria counts for scan '{}' (total:{}, passed:{}, failed:{}, errors:{}): {}",
                        scan_id, total, passed, failed, errors, validation_error)
             }
             Self::FindingIdGenerationFailed { context, cause } => {
@@ -508,13 +508,13 @@ impl std::fmt::Display for ResultGenerationError {
                     scan_id, start_time, end_time
                 )
             }
-            Self::IcsMetadataValidationFailed {
+            Self::EspMetadataValidationFailed {
                 scan_id,
                 validation_errors,
             } => {
                 write!(
                     f,
-                    "ICS metadata validation failed for scan '{}': [{}]",
+                    "ESP metadata validation failed for scan '{}': [{}]",
                     scan_id,
                     validation_errors.join(", ")
                 )

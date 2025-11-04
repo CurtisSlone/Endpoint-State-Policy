@@ -1,13 +1,13 @@
 //! # Scan Result Types
 //!
-//! Core data structures for ICS compliance validation results.
+//! Core data structures for ESP compliance validation results.
 //! These types are designed for serialization to JSON and integration
 //! with SIEM/SOAR tools and compliance reporting systems.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Complete scan result for one ICS definition file
+/// Complete scan result for one ESP definition file
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScanResult {
     /// Unique identifier for this scan execution
@@ -20,12 +20,12 @@ pub struct ScanResult {
     pub results: ComplianceResults,
 }
 
-/// Metadata for the scan execution and ICS definition
+/// Metadata for the scan execution and ESP definition
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScanMetadata {
-    /// Required ICS metadata fields for SIEM/SOAR integration
+    /// Required ESP metadata fields for SIEM/SOAR integration
     #[serde(rename = "META")]
-    pub ics_metadata: IcsMetadata,
+    pub esp_metadata: EspMetadata,
 
     /// Host information where scan was executed
     pub host: HostContext,
@@ -37,11 +37,11 @@ pub struct ScanMetadata {
     pub timestamp: TimestampInfo,
 }
 
-/// Required fields from ICS META block for SIEM/SOAR output
+/// Required fields from ESP META block for SIEM/SOAR output
 #[derive(Debug, Serialize, Deserialize)]
-pub struct IcsMetadata {
-    /// Unique identifier for this ICS scan definition
-    pub ics_scan_id: String,
+pub struct EspMetadata {
+    /// Unique identifier for this ESP scan definition
+    pub esp_scan_id: String,
 
     /// Control framework being validated (e.g., "NIST", "CIS", "PCI-DSS")
     pub control_framework: String,
@@ -110,14 +110,14 @@ pub struct ComplianceResults {
     /// Detailed findings from validation failures
     pub findings: Vec<ComplianceFinding>,
 
-    /// Overall pass/fail status for the entire ICS definition
+    /// Overall pass/fail status for the entire ESP definition
     pub passed: bool,
 }
 
 /// Summary of compliance validation execution
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ComplianceCheck {
-    /// Total number of validation criteria in ICS definition
+    /// Total number of validation criteria in ESP definition
     pub total_criteria: u32,
 
     /// Number of criteria that passed validation
@@ -205,7 +205,7 @@ impl ScanResult {
     /// Create a new scan result with basic metadata
     pub fn new(
         scan_id: String,
-        ics_metadata: IcsMetadata,
+        esp_metadata: EspMetadata,
         host: HostContext,
         user_context: UserContext,
     ) -> Self {
@@ -214,7 +214,7 @@ impl ScanResult {
         Self {
             scan_id,
             metadata: ScanMetadata {
-                ics_metadata,
+                esp_metadata,
                 host,
                 user_context,
                 timestamp: TimestampInfo {
@@ -325,16 +325,16 @@ impl ScanResult {
     }
 }
 
-impl IcsMetadata {
+impl EspMetadata {
     /// Create from parsed metadata block
     pub fn from_metadata_block(
         metadata: &crate::types::metadata::MetaDataBlock,
     ) -> Result<Self, String> {
         Ok(Self {
-            ics_scan_id: metadata
+            esp_scan_id: metadata
                 .fields
-                .get("ics_scan_id")
-                .ok_or("Missing ics_scan_id")?
+                .get("esp_scan_id")
+                .ok_or("Missing esp_scan_id")?
                 .clone(),
             control_framework: metadata
                 .fields
@@ -363,7 +363,7 @@ impl IcsMetadata {
     /// Create with default values for testing
     pub fn default_test() -> Self {
         Self {
-            ics_scan_id: "test-scan-001".to_string(),
+            esp_scan_id: "test-scan-001".to_string(),
             control_framework: "TEST".to_string(),
             control: "TEST-1".to_string(),
             platform: "Test".to_string(),
@@ -521,13 +521,13 @@ impl Default for UserContext {
     }
 }
 
-impl From<&crate::types::metadata::MetaDataBlock> for IcsMetadata {
+impl From<&crate::types::metadata::MetaDataBlock> for EspMetadata {
     fn from(metadata: &crate::types::metadata::MetaDataBlock) -> Self {
         Self {
-            ics_scan_id: metadata
+            esp_scan_id: metadata
                 .fields
-                .get("ics_scan_id")
-                .expect("ics_scan_id should be validated before conversion")
+                .get("esp_scan_id")
+                .expect("esp_scan_id should be validated before conversion")
                 .clone(),
             control_framework: metadata
                 .fields

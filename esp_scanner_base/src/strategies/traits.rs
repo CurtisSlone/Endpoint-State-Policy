@@ -5,12 +5,12 @@
 //! All strategies operate within explicit CTN contracts that define field requirements,
 //! mappings, and validation rules.
 
+use crate::execution::behavior::BehaviorHints;
 use crate::strategies::ctn_contract::CtnContract;
 use crate::strategies::errors::{CollectionError, CtnExecutionError, ValidationReport};
 use crate::types::common::ResolvedValue;
 use crate::types::execution_context::{ExecutableCriterion, ExecutableObject};
-use crate::types::test::{ExistenceCheck, ItemCheck, StateJoinOp};
-use crate::execution::behavior::BehaviorHints;
+use crate::types::{ExistenceCheck, ItemCheck, StateJoinOp};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
@@ -55,9 +55,9 @@ pub trait CtnDataCollector: Send + Sync {
 
     /// Optional: Check if object exists without full collection
     fn object_exists(
-    &self,
-    object: &ExecutableObject,
-    ctn_contract: &CtnContract,
+        &self,
+        object: &ExecutableObject,
+        ctn_contract: &CtnContract,
     ) -> Result<bool, CollectionError> {
         // Default implementation: try collection and check for errors
         let hints = crate::execution::behavior::extract_behavior_hints(object);
@@ -592,44 +592,6 @@ impl TestProcessor for DefaultTestProcessor {
 // ============================================================================
 // Extension Traits for Implementation Helpers
 // ============================================================================
-
-/// Extension trait for string representation of test components
-pub trait TestComponentDisplay {
-    fn as_str(&self) -> &'static str;
-}
-
-impl TestComponentDisplay for ExistenceCheck {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::All => "all",
-            Self::None => "none",
-            Self::AtLeastOne => "at_least_one",
-            Self::OnlyOne => "only_one",
-        }
-    }
-}
-
-impl TestComponentDisplay for ItemCheck {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::AtLeastOne => "at_least_one",
-            Self::OnlyOne => "only_one",
-            Self::NoneSatisfy => "none_satisfy",
-        }
-    }
-}
-
-impl TestComponentDisplay for StateJoinOp {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::And => "AND",
-            Self::Or => "OR",
-            Self::One => "ONE",
-        }
-    }
-}
 
 /// Extension trait for CTN contract validation
 pub trait CtnContractValidator {

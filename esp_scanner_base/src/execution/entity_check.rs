@@ -4,7 +4,7 @@
 //! multiple values when needed.
 
 use crate::types::common::ResolvedValue;
-use crate::types::execution_context::{ExecutableCriterion, ExecutableState};
+use crate::types::execution_context::ExecutableCriterion;
 use std::collections::{HashMap, HashSet};
 
 /// Helper to identify which fields need entity-level collection
@@ -19,7 +19,7 @@ impl EntityCheckAnalyzer {
     /// Returns a map of field_name -> entity_check_type
     pub fn get_entity_check_fields(
         criterion: &ExecutableCriterion,
-    ) -> HashMap<String, crate::types::state::EntityCheck> {
+    ) -> HashMap<String, crate::types::EntityCheck> {
         let mut entity_fields = HashMap::new();
 
         // Check all states for entity checks
@@ -103,7 +103,7 @@ pub fn wrap_for_entity_check(value: ResolvedValue, needs_collection: bool) -> Re
 /// Returns (field_name, should_return_collection) pairs
 pub fn get_collection_strategy(
     criterion: &ExecutableCriterion,
-    object_id: &str,
+    _object_id: &str,
 ) -> HashMap<String, bool> {
     let entity_fields = EntityCheckAnalyzer::get_entity_check_fields(criterion);
 

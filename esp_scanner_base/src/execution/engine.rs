@@ -1,13 +1,14 @@
 //! # Execution Engine
 //!
 //! Orchestrates TEST-driven compliance validation with CTN contracts and tree traversal.
+use crate::execution::behavior::extract_behavior_hints;
+use crate::execution::comparisons::{string, ComparisonExt};
 use crate::execution::deferred_ops;
-use crate::execution::behavior::{extract_behavior_hints, BehaviorHints};
-use crate::ffi::log_consumer_debug;
 use crate::results::{
-    ComplianceFinding, FindingSeverity, HostContext, IcsMetadata, ResultGenerationError,
+    ComplianceFinding, EspMetadata, FindingSeverity, HostContext, ResultGenerationError,
     ScanResult, UserContext,
 };
+use crate::strategies::CtnExecutionError;
 use crate::strategies::{
     CollectedData, ComplianceStatus, CtnContract, CtnExecutionResult, CtnStrategyRegistry,
 };
@@ -16,9 +17,8 @@ use crate::types::criterion::CtnNodeId;
 use crate::types::execution_context::{
     ExecutableCriteriaTree, ExecutableCriterion, ExecutableObject, ExecutionContext,
 };
-use crate::execution::comparisons::{string, ComparisonExt};
-use crate::types::FilterAction;
-use crate::CtnExecutionError;
+use esp_compiler::grammar::ast::nodes::FilterAction;
+use esp_compiler::log_debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,16 +26,11 @@ use std::time::Instant;
 pub struct ExecutionEngine {
     context: ExecutionContext,
     registry: Arc<CtnStrategyRegistry>,
-    start_time: Option<Instant>,
 }
 impl ExecutionEngine {
     /// Create with strategy registry
     pub fn new(context: ExecutionContext, registry: Arc<CtnStrategyRegistry>) -> Self {
-        Self {
-            context,
-            registry,
-            start_time: None,
-        }
+        Self { context, registry }
     }
 
     /// Main execution entry point
@@ -59,7 +54,7 @@ impl ExecutionEngine {
         let findings = self.tree_result_to_findings(&tree_result, vec![])?;
 
         // Extract metadata
-        let ics_metadata = self.extract_ics_metadata()?;
+        let esp_metadata = self.extract_esp_metadata()?;
         let host = HostContext::from_system();
         let user_context = UserContext::from_environment();
 
@@ -73,7 +68,7 @@ impl ExecutionEngine {
         );
 
         // Create scan result
-        let mut scan_result = ScanResult::new(scan_id, ics_metadata, host, user_context);
+        let mut scan_result = ScanResult::new(scan_id, esp_metadata, host, user_context);
 
         // Update criteria counts with flat statistics
         scan_result.update_criteria_counts(stats.total, stats.passed, stats.failed, stats.errors);
@@ -91,8 +86,8 @@ impl ExecutionEngine {
         Ok(scan_result)
     }
 
-    /// Extract ICS metadata from execution context
-    fn extract_ics_metadata(&self) -> Result<IcsMetadata, ExecutionError> {
+    /// Extract ESP metadata from execution context
+    fn extract_esp_metadata(&self) -> Result<EspMetadata, ExecutionError> {
         let metadata =
             self.context
                 .metadata
@@ -102,9 +97,9 @@ impl ExecutionEngine {
                     reason: "Missing metadata in execution context".to_string(),
                 })?;
 
-        IcsMetadata::from_metadata_block(metadata).map_err(|e| ExecutionError::ExecutorFailed {
+        EspMetadata::from_metadata_block(metadata).map_err(|e| ExecutionError::ExecutorFailed {
             ctn_type: "metadata_extraction".to_string(),
-            reason: format!("Failed to extract ICS metadata: {}", e),
+            reason: format!("Failed to extract ESP metadata: {}", e),
         })
     }
 
@@ -208,12 +203,9 @@ impl ExecutionEngine {
         const CTN_TIMEOUT_SECS: u64 = 30;
         let start = Instant::now();
 
-        let _ = log_consumer_debug(
-            "Starting CTN execution",
-            &[
-                ("ctn_type", &criterion.criterion_type),
-                ("ctn_node_id", &criterion.ctn_node_id.to_string()),
-            ],
+        log_debug!("Starting CTN execution",
+            "ctn_type" => &criterion.criterion_type,
+            "ctn_node_id" => criterion.ctn_node_id
         );
 
         // Get contract for this CTN type
@@ -251,33 +243,24 @@ impl ExecutionEngine {
         // Attempt batch collection if supported
         let mut collected_data =
             if collector.supports_batch_collection() && !criterion.objects.is_empty() {
-                let _ = log_consumer_debug(
-                    "Attempting batch collection",
-                    &[
-                        ("ctn_type", &criterion.criterion_type),
-                        ("object_count", &criterion.objects.len().to_string()),
-                    ],
+                log_debug!("Attempting batch collection",
+                    "ctn_type" => &criterion.criterion_type,
+                    "object_count" => criterion.objects.len()
                 );
 
                 let object_refs: Vec<&ExecutableObject> = criterion.objects.iter().collect();
                 match collector.collect_batch(object_refs, &contract) {
                     Ok(batch_data) => {
-                        let _ = log_consumer_debug(
-                            "Batch collection successful",
-                            &[
-                                ("ctn_type", &criterion.criterion_type),
-                                ("objects_collected", &batch_data.len().to_string()),
-                            ],
+                        log_debug!("Batch collection successful",
+                            "ctn_type" => &criterion.criterion_type,
+                            "objects_collected" => batch_data.len()
                         );
                         batch_data
                     }
                     Err(e) => {
-                        let _ = log_consumer_debug(
-                            "Batch collection failed, falling back to individual",
-                            &[
-                                ("ctn_type", &criterion.criterion_type),
-                                ("error", &e.to_string()),
-                            ],
+                        log_debug!("Batch collection failed, falling back to individual",
+                            "ctn_type" => &criterion.criterion_type,
+                            "error" => e
                         );
                         HashMap::new()
                     }
@@ -335,13 +318,10 @@ impl ExecutionEngine {
             });
         }
 
-        let _ = log_consumer_debug(
-            "CTN execution completed",
-            &[
-                ("ctn_type", &criterion.criterion_type),
-                ("status", &format!("{:?}", result.status)),
-                ("duration_ms", &elapsed.as_millis().to_string()),
-            ],
+        log_debug!("CTN execution completed",
+            "ctn_type" => &criterion.criterion_type,
+            "status" => format!("{:?}", result.status),
+            "duration_ms" => elapsed.as_millis()
         );
 
         Ok(result)
@@ -474,7 +454,11 @@ impl ExecutionEngine {
     ) -> Result<HashMap<String, CollectedData>, ExecutionError> {
         for object in &criterion.objects {
             let filters = object.get_filters();
-            eprintln!("🔍 Object '{}' has {} filters", object.identifier, filters.len());
+            eprintln!(
+                "🔍 Object '{}' has {} filters",
+                object.identifier,
+                filters.len()
+            );
             if filters.is_empty() {
                 continue;
             }
@@ -500,208 +484,163 @@ impl ExecutionEngine {
     }
 
     /// Evaluate filter against GLOBAL states (not CTN-local states)
-fn evaluate_filter_against_global_states(
-    &self,
-    filter: &crate::types::filter::ResolvedFilterSpec,
-    data: &CollectedData,
-    contract: &CtnContract,
-) -> Result<bool, ExecutionError> {
-    // AND logic: ALL state refs must match for filter to pass
-    for state_ref in &filter.state_refs {
-        // Look up in GLOBAL states, not local states
-        let state = self.context.global_states
-            .get(state_ref)
-            .ok_or_else(|| ExecutionError::StateNotFound {
-                state_id: state_ref.clone(),
+    fn evaluate_filter_against_global_states(
+        &self,
+        filter: &crate::types::filter::ResolvedFilterSpec,
+        data: &CollectedData,
+        contract: &CtnContract,
+    ) -> Result<bool, ExecutionError> {
+        // AND logic: ALL state refs must match for filter to pass
+        for state_ref in &filter.state_refs {
+            // Look up in GLOBAL states, not local states
+            let state = self.context.global_states.get(state_ref).ok_or_else(|| {
+                ExecutionError::StateNotFound {
+                    state_id: state_ref.clone(),
+                }
             })?;
 
-        // Convert ResolvedState to ExecutableState fields for evaluation
-        for field in &state.resolved_fields {
-            // Map state field name to data field name using contract
-            let data_field_name = contract
-                .field_mappings
-                .validation_mappings
-                .state_to_data
-                .get(&field.name)
-                .unwrap_or(&field.name);
+            // Convert ResolvedState to ExecutableState fields for evaluation
+            for field in &state.resolved_fields {
+                // Map state field name to data field name using contract
+                let data_field_name = contract
+                    .field_mappings
+                    .validation_mappings
+                    .state_to_data
+                    .get(&field.name)
+                    .unwrap_or(&field.name);
 
-            // Get collected value for this field
-            if let Some(collected_value) = data.get_field(data_field_name) {
-                let matches = self.compare_for_filter(
-                    collected_value,
-                    &field.value,
-                    field.operation,
-                )?;
+                // Get collected value for this field
+                if let Some(collected_value) = data.get_field(data_field_name) {
+                    let matches =
+                        self.compare_for_filter(collected_value, &field.value, field.operation)?;
 
-                // Short-circuit: If any field fails, entire filter fails
-                if !matches {
+                    // Short-circuit: If any field fails, entire filter fails
+                    if !matches {
+                        return Ok(false);
+                    }
+                } else {
+                    // Field not collected - treat as filter failure
                     return Ok(false);
                 }
-            } else {
-                // Field not collected - treat as filter failure
-                return Ok(false);
             }
         }
+
+        // All states matched
+        Ok(true)
     }
-    
-    // All states matched
-    Ok(true)
-}
 
-    /// Evaluate a single filter against collected data
-/// NOW SUPPORTS ALL ICS OPERATIONS
-fn evaluate_filter(
-    &self,
-    filter: &crate::types::filter::ResolvedFilterSpec,
-    data: &CollectedData,
-    contract: &CtnContract,
-    available_states: &[crate::types::execution_context::ExecutableState],
-) -> Result<bool, ExecutionError> {
-    // AND logic: ALL state refs must match for filter to pass
-    for state_ref in &filter.state_refs {
-        let state = available_states
-            .iter()
-            .find(|s| s.identifier == *state_ref)
-            .ok_or_else(|| ExecutionError::StateNotFound {
-                state_id: state_ref.clone(),
-            })?;
+    /// Compare values for filter evaluation with full operation support
+    /// Similar to executor comparison but returns Result<bool>
+    fn compare_for_filter(
+        &self,
+        actual: &ResolvedValue,
+        expected: &ResolvedValue,
+        operation: crate::types::common::Operation,
+    ) -> Result<bool, ExecutionError> {
+        use crate::types::common::Operation;
 
-        // All fields in the state must match (AND within state)
-        for field in &state.fields {
-            // Map state field name to data field name using contract
-            let data_field_name = contract
-                .field_mappings
-                .validation_mappings
-                .state_to_data
-                .get(&field.name)
-                .unwrap_or(&field.name);
-
-            // Get collected value for this field
-            if let Some(collected_value) = data.get_field(data_field_name) {
-                // ✅ FIX: Use comprehensive comparison logic
-                let matches = self.compare_for_filter(
-                    collected_value,
-                    &field.value,
-                    field.operation,
-                )?;
-
-                // Short-circuit: If any field fails, entire filter fails
-                if !matches {
-                    return Ok(false);
-                }
-            } else {
-                // Field not collected - treat as filter failure
-                return Ok(false);
+        let result = match (actual, expected, operation) {
+            // ============================================================
+            // String operations (all supported)
+            // ============================================================
+            (ResolvedValue::String(a), ResolvedValue::String(e), op) => {
+                string::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!("String comparison failed: {}", e),
+                })?
             }
-        }
+
+            // Integer operations - direct comparison
+            (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::Equals) => a == e,
+            (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::NotEqual) => a != e,
+            (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::GreaterThan) => a > e,
+            (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::LessThan) => a < e,
+            (
+                ResolvedValue::Integer(a),
+                ResolvedValue::Integer(e),
+                Operation::GreaterThanOrEqual,
+            ) => a >= e,
+            (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::LessThanOrEqual) => {
+                a <= e
+            }
+
+            // Float operations - direct comparison
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::Equals) => a == e,
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::NotEqual) => a != e,
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::GreaterThan) => a > e,
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::LessThan) => a < e,
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::GreaterThanOrEqual) => {
+                a >= e
+            }
+            (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::LessThanOrEqual) => {
+                a <= e
+            }
+
+            // Boolean operations - direct comparison
+            (ResolvedValue::Boolean(a), ResolvedValue::Boolean(e), Operation::Equals) => a == e,
+            (ResolvedValue::Boolean(a), ResolvedValue::Boolean(e), Operation::NotEqual) => a != e,
+
+            // Version comparisons - use ResolvedValue's compare_with trait
+            (ResolvedValue::Version(_), ResolvedValue::Version(_), _) => actual
+                .compare_with(expected, operation)
+                .map_err(|e| ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!("Version comparison failed: {}", e),
+                })?,
+
+            // Collection operations - use collection module
+            (ResolvedValue::Collection(a), ResolvedValue::Collection(e), op) => {
+                use crate::execution::comparisons::collection;
+                collection::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!("Collection comparison failed: {}", e),
+                })?
+            }
+
+            // ============================================================
+            // EVR string comparisons (RPM-style versions)
+            // ============================================================
+            (ResolvedValue::EvrString(a), ResolvedValue::EvrString(e), op) => {
+                use crate::execution::comparisons::evr;
+                evr::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!("EVR comparison failed: {}", e),
+                })?
+            }
+
+            // ============================================================
+            // Binary operations (contains operation for byte sequences)
+            // ============================================================
+            (ResolvedValue::Binary(a), ResolvedValue::Binary(e), op) => {
+                use crate::execution::comparisons::binary;
+                binary::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!("Binary comparison failed: {}", e),
+                })?
+            }
+
+            // ============================================================
+            // Type mismatch or unsupported operation
+            // ============================================================
+            _ => {
+                return Err(ExecutionError::ExecutorFailed {
+                    ctn_type: "filter_evaluation".to_string(),
+                    reason: format!(
+                        "Type mismatch in filter: actual={:?}, expected={:?}, operation={:?}",
+                        actual, expected, operation
+                    ),
+                })
+            }
+        };
+
+        Ok(result)
     }
-    
-    // All states matched
-    Ok(true)
-}
-
-/// Compare values for filter evaluation with full operation support
-/// Similar to executor comparison but returns Result<bool>
-fn compare_for_filter(
-    &self,
-    actual: &ResolvedValue,
-    expected: &ResolvedValue,
-    operation: crate::types::common::Operation,
-) -> Result<bool, ExecutionError> {
-    use crate::types::common::Operation;
-    
-    let result = match (actual, expected, operation) {
-        // ============================================================
-        // String operations (all supported)
-        // ============================================================
-        (ResolvedValue::String(a), ResolvedValue::String(e), op) => {
-            string::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!("String comparison failed: {}", e),
-            })?
-        }
-        
-       // Integer operations - direct comparison
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::Equals) => a == e,
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::NotEqual) => a != e,
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::GreaterThan) => a > e,
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::LessThan) => a < e,
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::GreaterThanOrEqual) => a >= e,
-        (ResolvedValue::Integer(a), ResolvedValue::Integer(e), Operation::LessThanOrEqual) => a <= e,
-        
-        // Float operations - direct comparison
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::Equals) => a == e,
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::NotEqual) => a != e,
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::GreaterThan) => a > e,
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::LessThan) => a < e,
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::GreaterThanOrEqual) => a >= e,
-        (ResolvedValue::Float(a), ResolvedValue::Float(e), Operation::LessThanOrEqual) => a <= e,
-        
-        // Boolean operations - direct comparison  
-        (ResolvedValue::Boolean(a), ResolvedValue::Boolean(e), Operation::Equals) => a == e,
-        (ResolvedValue::Boolean(a), ResolvedValue::Boolean(e), Operation::NotEqual) => a != e,
-
-        // Version comparisons - use ResolvedValue's compare_with trait
-        (ResolvedValue::Version(_), ResolvedValue::Version(_), _) => {
-            actual.compare_with(expected, operation).map_err(|e| ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!("Version comparison failed: {}", e),
-            })?
-        }
-
-        // Collection operations - use collection module
-        (ResolvedValue::Collection(a), ResolvedValue::Collection(e), op) => {
-            use crate::execution::comparisons::collection;
-            collection::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!("Collection comparison failed: {}", e),
-            })?
-        }
-        
-        // ============================================================
-        // EVR string comparisons (RPM-style versions)
-        // ============================================================
-        (ResolvedValue::EvrString(a), ResolvedValue::EvrString(e), op) => {
-            use crate::execution::comparisons::evr;
-            evr::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!("EVR comparison failed: {}", e),
-            })?
-        }
-        
-        // ============================================================
-        // Binary operations (contains operation for byte sequences)
-        // ============================================================
-        (ResolvedValue::Binary(a), ResolvedValue::Binary(e), op) => {
-            use crate::execution::comparisons::binary;
-            binary::compare(a, e, op).map_err(|e| ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!("Binary comparison failed: {}", e),
-            })?
-        }
-        
-        // ============================================================
-        // Type mismatch or unsupported operation
-        // ============================================================
-        _ => {
-            return Err(ExecutionError::ExecutorFailed {
-                ctn_type: "filter_evaluation".to_string(),
-                reason: format!(
-                    "Type mismatch in filter: actual={:?}, expected={:?}, operation={:?}",
-                    actual, expected, operation
-                ),
-            })
-        }
-    };
-    
-    Ok(result)
-}
 
     /// Execute deferred operations for this criterion ONLY
     /// FIXED: Only executes operations relevant to this CTN's collected objects
     fn execute_deferred_operations_for_criterion(
         &mut self,
-        criterion: &ExecutableCriterion,
+        _criterion: &ExecutableCriterion,
         collected_data: &HashMap<String, CollectedData>,
     ) -> Result<(), ExecutionError> {
         // Simply call the deferred ops module - it will execute ALL deferred operations
@@ -760,71 +699,6 @@ fn compare_for_filter(
         }
 
         Ok(findings)
-    }
-
-    /// Extract failure details from CTN execution result
-    fn extract_failure_details(
-        &self,
-        ctn_result: &CtnResult,
-    ) -> (serde_json::Value, serde_json::Value, String) {
-        let exec_result = &ctn_result.execution_result;
-
-        // Build expected from state results
-        let mut expected_map = serde_json::Map::new();
-        let mut actual_map = serde_json::Map::new();
-        let mut description_parts = vec![exec_result.message.clone()];
-
-        for state_result in &exec_result.state_results {
-            if !state_result.combined_result {
-                for field_result in &state_result.state_results {
-                    if !field_result.passed {
-                        expected_map.insert(
-                            field_result.field_name.clone(),
-                            serde_json::json!(format!("{:?}", field_result.expected_value)),
-                        );
-                        actual_map.insert(
-                            field_result.field_name.clone(),
-                            serde_json::json!(format!("{:?}", field_result.actual_value)),
-                        );
-
-                        description_parts.push(format!(
-                            "Field '{}': expected {:?}, got {:?}",
-                            field_result.field_name,
-                            field_result.expected_value,
-                            field_result.actual_value
-                        ));
-                    }
-                }
-            }
-        }
-
-        (
-            serde_json::Value::Object(expected_map),
-            serde_json::Value::Object(actual_map),
-            description_parts.join("\n"),
-        )
-    }
-
-    /// Determine severity from ICS metadata
-    fn determine_severity_from_metadata(&self) -> Result<FindingSeverity, ExecutionError> {
-        if let Some(metadata) = &self.context.metadata {
-            if let Some(criticality) = metadata.fields.get("criticality") {
-                return Ok(match criticality.to_lowercase().as_str() {
-                    "critical" => FindingSeverity::Critical,
-                    "high" => FindingSeverity::High,
-                    "medium" => FindingSeverity::Medium,
-                    "low" => FindingSeverity::Low,
-                    "info" => FindingSeverity::Info,
-                    _ => FindingSeverity::Medium,
-                });
-            }
-        }
-        Ok(FindingSeverity::Medium)
-    }
-
-    /// Generate unique scan ID
-    fn generate_scan_id(&self) -> String {
-        format!("scan_{}", chrono::Utc::now().timestamp())
     }
 }
 // ============================================================================

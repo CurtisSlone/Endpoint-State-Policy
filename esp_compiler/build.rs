@@ -114,42 +114,63 @@ struct LoggingLimits {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=ICS_BUILD_PROFILE");
-    println!("cargo:rerun-if-env-changed=ICS_CONFIG_DIR");
+    println!("cargo:rerun-if-env-changed=ESP_BUILD_PROFILE");
+    println!("cargo:rerun-if-env-changed=ESP_CONFIG_DIR");
 
     // Windows DLL import library generation
     configure_windows_dll_build();
 
-    let profile = env::var("ICS_BUILD_PROFILE").unwrap_or_else(|_| "development".to_string());
-    let config_dir = env::var("ICS_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
-    let config_path = format!("{}/{}.toml", config_dir, profile);
+    let profile = env::var("ESP_BUILD_PROFILE").unwrap_or_else(|_| "development".to_string());
+    let config_dir = env::var("ESP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
 
-    println!("cargo:rerun-if-changed={}", config_path);
+    // Find workspace root (parent of esp_compiler directory)
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let workspace_root = Path::new(&manifest_dir)
+        .parent()
+        .expect("Could not find workspace root (parent directory)");
 
-    if !Path::new(&config_path).exists() {
-        panic!("Configuration file not found: {}", config_path);
+    // Build config path relative to workspace root
+    let config_path = workspace_root
+        .join(&config_dir)
+        .join(format!("{}.toml", profile));
+
+    println!("cargo:rerun-if-changed={}", config_path.display());
+
+    if !config_path.exists() {
+        panic!(
+            "Configuration file not found: {}\nWorkspace root: {}\nLooking for: {}/{}/{}.toml",
+            config_path.display(),
+            workspace_root.display(),
+            workspace_root.display(),
+            config_dir,
+            profile
+        );
     }
 
     let config_content = fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path, e));
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
 
     let config: CompileTimeConfig = toml::from_str(&config_content)
-        .unwrap_or_else(|e| panic!("Invalid TOML in {}: {}", config_path, e));
+        .unwrap_or_else(|e| panic!("Invalid TOML in {}: {}", config_path.display(), e));
 
     validate_security_constraints(&config, &profile);
     generate_constants(&config, &profile);
 
-    println!("cargo:warning=Generated constants from {}", config_path);
+    println!(
+        "cargo:warning=Generated constants from {}",
+        config_path.display()
+    );
 }
 
 fn configure_windows_dll_build() {
     let target = env::var("TARGET").unwrap_or_default();
 
     // For Windows MinGW targets, ensure import library is generated
+    // This is for building esp_compiler as a cdylib (shared library) for FFI
     if target.contains("windows-gnu") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,--out-implib,libics_lib.dll.a");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--out-implib,libesp_compiler.dll.a");
         println!(
-            "cargo:warning=Configuring Windows DLL to generate import library (libics_lib.dll.a)"
+            "cargo:warning=Configuring Windows DLL to generate import library (libesp_compiler.dll.a)"
         );
     }
 }

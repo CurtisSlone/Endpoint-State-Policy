@@ -24,29 +24,7 @@ impl BehaviorHints {
     /// - Identifiers followed by non-identifier values are parameters
     /// - Boolean values (true/false) are treated as parameter values
     /// - Numeric values are treated as parameter values
-    ///
-    /// # Examples
-    /// ```ignore
-    /// use ics_sdk::execution::behavior::BehaviorHints;
-    ///
-    /// // Simple flags
-    /// let hints = BehaviorHints::parse(&["recursive_scan", "include_hidden"]);
-    /// assert_eq!(hints.flags, vec!["recursive_scan", "include_hidden"]);
-    ///
-    /// // Parameterized
-    /// let hints = BehaviorHints::parse(&["max_depth", "10", "timeout", "30"]);
-    /// assert_eq!(hints.parameters.get("max_depth"), Some(&"10".to_string()));
-    ///
-    /// // Mixed
-    /// let hints = BehaviorHints::parse(&[
-    ///     "recursive_scan",
-    ///     "max_depth", "10",
-    ///     "include_hidden",
-    ///     "compress_results"
-    /// ]);
-    /// assert_eq!(hints.flags.len(), 3);
-    /// assert_eq!(hints.parameters.len(), 1);
-    /// ```
+
     pub fn parse(behavior_values: &[String]) -> Self {
         let mut flags = Vec::new();
         let mut parameters = HashMap::new();
@@ -158,7 +136,7 @@ pub fn extract_behavior_hints(
 ///             // Perform recursive scan with depth limit
 ///         }
 ///     }
-///     
+///
 ///     // ... rest of collection logic
 /// }
 /// ```

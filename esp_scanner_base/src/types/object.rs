@@ -1,14 +1,15 @@
-use super::common::{DataType, RecordData, ResolvedValue, Value};
-use super::filter::{FilterSpec, ResolvedFilterSpec};
+use super::common::{RecordData, ResolvedValue};
+use super::filter::ResolvedFilterSpec;
+use esp_compiler::grammar::ast::nodes::{DataType, FilterSpec, ObjectElement, Value};
 use serde::{Deserialize, Serialize};
 
-/// Object declaration from ICS definition
+/// Object declaration from ESP definition (scanner working type)
 /// Can be either global (definition-level) or local (CTN-level)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectDeclaration {
     pub identifier: String,
-    pub elements: Vec<ObjectElement>,
-    pub is_global: bool, // true = definition-level, false = CTN-level
+    pub elements: Vec<ObjectElement>, // Using compiler's type directly
+    pub is_global: bool,
 }
 
 /// Resolved object with all variable references substituted
@@ -19,69 +20,22 @@ pub struct ResolvedObject {
     pub is_global: bool,
 }
 
-/// Individual elements within an object definition
-/// EBNF: object_element ::= module_element | parameter_element | select_element | behavior_element | filter_spec | set_reference | object_field
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ObjectElement {
-    /// Module specification for platform-specific modules (PowerShell, WMI, etc.)
-    /// EBNF: module_element ::= module_field space backtick_string statement_end
-    Module {
-        field: ModuleField, // module_name, verb, noun, module_id, module_version
-        value: String,      // Always string literal in ICS
-    },
-
-    /// Parameters block with data type and nested fields
-    /// EBNF: parameter_element ::= "parameters" space data_type statement_end parameter_fields? "parameters_end" statement_end
-    Parameter {
-        data_type: DataType,
-        fields: Vec<(String, String)>, // (key, value) pairs - values are always strings in JSON
-    },
-
-    /// Select block with data type and nested fields  
-    /// EBNF: select_element ::= "select" space data_type statement_end select_fields? "select_end" statement_end
-    Select {
-        data_type: DataType,
-        fields: Vec<(String, String)>, // (key, value) pairs - values are always strings in JSON
-    },
-
-    /// Behavior specification with array of identifiers
-    /// EBNF: behavior_element ::= "behavior" space behavior_value+ statement_end
-    Behavior {
-        values: Vec<String>, // Behavior identifiers/flags
-    },
-
-    /// Filter specification (references global states only)
-    /// EBNF: filter_spec ::= "FILTER" space filter_action? statement_end filter_references "FILTER_END" statement_end
-    Filter(FilterSpec),
-
-    /// Set reference (references global sets only)
-    /// EBNF: set_reference ::= "SET_REF" space set_identifier statement_end
-    SetRef { set_id: String },
-
-    /// Simple field with name-value pair
-    /// EBNF: object_field ::= field_name space field_value statement_end
-    Field {
-        name: String,
-        value: Value, // Can be literal or Variable reference
-    },
-}
-
 /// Resolved object element with all variables substituted
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResolvedObjectElement {
     /// Module specification (unchanged during resolution)
-    Module { field: ModuleField, value: String },
+    Module { field: String, value: String },
 
     /// Resolved parameters as structured data
     Parameter {
         data_type: DataType,
-        data: RecordData, // Converted from field pairs to structured data
+        data: RecordData,
     },
 
     /// Resolved select as structured data
     Select {
         data_type: DataType,
-        data: RecordData, // Converted from field pairs to structured data
+        data: RecordData,
     },
 
     /// Behavior specification (unchanged during resolution)
@@ -97,78 +51,31 @@ pub enum ResolvedObjectElement {
     Field { name: String, value: ResolvedValue },
 }
 
-/// Module field types for platform-specific operations
-/// EBNF: module_field ::= "module_name" | "verb" | "noun" | "module_id" | "module_version"
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ModuleField {
-    ModuleName,    // module_name
-    Verb,          // verb
-    Noun,          // noun
-    ModuleId,      // module_id
-    ModuleVersion, // module_version
-}
+// ============================================================================
+// IMPLEMENTATIONS - Scanner working types
+// ============================================================================
 
-impl ModuleField {
-    /// Parse module field from string
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "module_name" => Some(Self::ModuleName),
-            "verb" => Some(Self::Verb),
-            "noun" => Some(Self::Noun),
-            "module_id" => Some(Self::ModuleId),
-            "module_version" => Some(Self::ModuleVersion),
-            _ => None,
-        }
-    }
-
-    /// Get the field as it appears in ICS source
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ModuleName => "module_name",
-            Self::Verb => "verb",
-            Self::Noun => "noun",
-            Self::ModuleId => "module_id",
-            Self::ModuleVersion => "module_version",
-        }
-    }
-}
-
-/// Object reference for referencing global objects
-/// EBNF: object_reference ::= "OBJECT_REF" space object_identifier statement_end
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ObjectRef {
-    /// Referenced object ID (must be global)
-    pub object_id: String,
-}
-
-impl ObjectRef {
-    /// Create a new object reference
-    pub fn new(object_id: impl Into<String>) -> Self {
-        Self {
-            object_id: object_id.into(),
-        }
-    }
-}
-
-/// Set reference for referencing global sets within objects
-/// EBNF: set_reference ::= "SET_REF" space set_identifier statement_end  
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SetRef {
-    /// Referenced set ID (must be global)
-    pub set_id: String,
-}
-
-impl SetRef {
-    /// Create a new set reference
-    pub fn new(set_id: impl Into<String>) -> Self {
-        Self {
-            set_id: set_id.into(),
-        }
-    }
-}
-
-// Utility implementations
 impl ObjectDeclaration {
+    /// Convert from compiler AST node
+    ///
+    /// # Arguments
+    /// * `node` - Object definition node from esp_compiler AST
+    ///
+    /// # Example
+    /// ```ignore
+    /// use esp_compiler::grammar::ast::nodes::ObjectDefinition;
+    ///
+    /// let ast_obj = ObjectDefinition { ... };
+    /// let scanner_obj = ObjectDeclaration::from_ast_node(&ast_obj);
+    /// ```
+    pub fn from_ast_node(node: &esp_compiler::grammar::ast::nodes::ObjectDefinition) -> Self {
+        Self {
+            identifier: node.id.clone(),
+            elements: node.elements.clone(), // Already compiler type
+            is_global: node.is_global,
+        }
+    }
+
     /// Check if this object has any variable references in its elements
     pub fn has_variable_references(&self) -> bool {
         self.elements
@@ -210,7 +117,7 @@ impl ObjectDeclaration {
         let mut deps = Vec::new();
         for element in &self.elements {
             if let ObjectElement::Filter(filter) = element {
-                deps.extend(filter.get_state_dependencies());
+                deps.extend(filter.state_refs.iter().map(|sr| sr.state_id.clone()));
             }
         }
         deps.sort();
@@ -233,7 +140,7 @@ impl ObjectDeclaration {
         self.elements
             .iter()
             .filter_map(|element| match element {
-                ObjectElement::SetRef { set_id } => Some(set_id.clone()),
+                ObjectElement::SetRef { set_id, .. } => Some(set_id.clone()),
                 _ => None,
             })
             .collect()
@@ -247,22 +154,33 @@ impl ObjectDeclaration {
     }
 }
 
-impl ObjectElement {
-    /// Check if this element has variable references
-    pub fn has_variable_references(&self) -> bool {
+// ============================================================================
+// EXTENSION TRAITS - For compiler types used in scanner
+// ============================================================================
+
+/// Extension trait for compiler's ObjectElement to add scanner-specific helpers
+pub trait ObjectElementExt {
+    fn has_variable_references(&self) -> bool;
+    fn get_variable_references(&self) -> Vec<String>;
+    fn is_filter(&self) -> bool;
+    fn as_filter(&self) -> Option<&FilterSpec>;
+    fn has_external_references(&self) -> bool;
+    fn element_type_name(&self) -> &'static str;
+}
+
+impl ObjectElementExt for ObjectElement {
+    fn has_variable_references(&self) -> bool {
         match self {
-            ObjectElement::Field { value, .. } => value.has_variable_reference(),
-            // Other elements don't contain variable references in current ICS spec
+            ObjectElement::Field(field) => matches!(field.value, Value::Variable(_)),
             _ => false,
         }
     }
 
-    /// Get variable references from this element
-    pub fn get_variable_references(&self) -> Vec<String> {
+    fn get_variable_references(&self) -> Vec<String> {
         match self {
-            ObjectElement::Field { value, .. } => {
-                if let Some(var_name) = value.get_variable_name() {
-                    vec![var_name.to_string()]
+            ObjectElement::Field(field) => {
+                if let Value::Variable(var_name) = &field.value {
+                    vec![var_name.clone()]
                 } else {
                     Vec::new()
                 }
@@ -271,30 +189,26 @@ impl ObjectElement {
         }
     }
 
-    /// Check if this element is a filter
-    pub fn is_filter(&self) -> bool {
+    fn is_filter(&self) -> bool {
         matches!(self, ObjectElement::Filter(_))
     }
 
-    /// Get filter specification if this element is a filter
-    pub fn as_filter(&self) -> Option<&FilterSpec> {
+    fn as_filter(&self) -> Option<&FilterSpec> {
         match self {
             ObjectElement::Filter(filter) => Some(filter),
             _ => None,
         }
     }
 
-    /// Check if this element references external symbols (sets, filters)
-    pub fn has_external_references(&self) -> bool {
+    fn has_external_references(&self) -> bool {
         match self {
             ObjectElement::SetRef { .. } => true,
-            ObjectElement::Filter(_) => true, // Filters reference states
+            ObjectElement::Filter(_) => true,
             _ => false,
         }
     }
 
-    /// Get the element type name for debugging
-    pub fn element_type_name(&self) -> &'static str {
+    fn element_type_name(&self) -> &'static str {
         match self {
             ObjectElement::Module { .. } => "Module",
             ObjectElement::Parameter { .. } => "Parameter",
@@ -302,40 +216,184 @@ impl ObjectElement {
             ObjectElement::Behavior { .. } => "Behavior",
             ObjectElement::Filter(_) => "Filter",
             ObjectElement::SetRef { .. } => "SetRef",
-            ObjectElement::Field { .. } => "Field",
+            ObjectElement::Field(_) => "Field",
+            ObjectElement::RecordCheck(_) => "RecordCheck",
+            ObjectElement::InlineSet(_) => "InlineSet",
         }
     }
 }
 
-// Display implementations
-impl std::fmt::Display for ModuleField {
+// ============================================================================
+// DISPLAY IMPLEMENTATIONS
+// ============================================================================
+
+impl std::fmt::Display for ObjectDeclaration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
+        write!(
+            f,
+            "OBJECT {} ({} elements, global: {})",
+            self.identifier,
+            self.elements.len(),
+            self.is_global
+        )
     }
 }
 
-impl std::fmt::Display for ObjectElement {
+impl std::fmt::Display for ResolvedObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ObjectElement::Module { field, value } => write!(f, "{} `{}`", field, value),
-            ObjectElement::Parameter { data_type, fields } => {
-                write!(f, "parameters {} ({} fields)", data_type, fields.len())
-            }
-            ObjectElement::Select { data_type, fields } => {
-                write!(f, "select {} ({} fields)", data_type, fields.len())
-            }
-            ObjectElement::Behavior { values } => {
-                write!(f, "behavior [{}]", values.join(", "))
-            }
-            ObjectElement::Filter(filter) => write!(f, "{}", filter),
-            ObjectElement::SetRef { set_id } => write!(f, "SET_REF {}", set_id),
-            ObjectElement::Field { name, value } => match value {
-                Value::String(s) => write!(f, "{} `{}`", name, s),
-                Value::Variable(v) => write!(f, "{} VAR {}", name, v),
-                Value::Integer(i) => write!(f, "{} {}", name, i),
-                Value::Float(fl) => write!(f, "{} {}", name, fl),
-                Value::Boolean(b) => write!(f, "{} {}", name, b),
-            },
-        }
+        write!(
+            f,
+            "ResolvedOBJECT {} ({} elements)",
+            self.identifier,
+            self.resolved_elements.len()
+        )
+    }
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use esp_compiler::grammar::ast::nodes::{
+        DataType as AstDataType, ObjectDefinition as AstObject, ObjectElement as AstElement,
+        ObjectField as AstField, Value as AstValue,
+    };
+
+    #[test]
+    fn test_object_ast_conversion_global() {
+        // Create compiler AST node for global object
+        let ast_obj = AstObject {
+            id: "test_object".to_string(),
+            elements: vec![
+                AstElement::Field(AstField {
+                    name: "path".to_string(),
+                    value: AstValue::String("/tmp/test".to_string()),
+                    span: None,
+                }),
+                AstElement::Module {
+                    field: "type".to_string(),
+                    value: "file".to_string(),
+                },
+            ],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_obj = ObjectDeclaration::from_ast_node(&ast_obj);
+
+        // Verify
+        assert_eq!(scanner_obj.identifier, "test_object");
+        assert_eq!(scanner_obj.elements.len(), 2);
+        assert!(scanner_obj.is_global);
+        assert!(!scanner_obj.is_empty());
+    }
+
+    #[test]
+    fn test_object_ast_conversion_local() {
+        // Create compiler AST node for local object (in CTN)
+        let ast_obj = AstObject {
+            id: "local_object".to_string(),
+            elements: vec![AstElement::Field(AstField {
+                name: "name".to_string(),
+                value: AstValue::String("test".to_string()),
+                span: None,
+            })],
+            is_global: false,
+            span: None,
+        };
+
+        // Convert to scanner type
+        let scanner_obj = ObjectDeclaration::from_ast_node(&ast_obj);
+
+        // Verify
+        assert_eq!(scanner_obj.identifier, "local_object");
+        assert!(!scanner_obj.is_global);
+        assert_eq!(scanner_obj.element_count(), 1);
+    }
+
+    #[test]
+    fn test_object_with_variable_references() {
+        // Create object with variable reference
+        let ast_obj = AstObject {
+            id: "var_object".to_string(),
+            elements: vec![AstElement::Field(AstField {
+                name: "dynamic_path".to_string(),
+                value: AstValue::Variable("path_var".to_string()),
+                span: None,
+            })],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert
+        let scanner_obj = ObjectDeclaration::from_ast_node(&ast_obj);
+
+        // Verify
+        assert!(scanner_obj.has_variable_references());
+        let refs = scanner_obj.get_variable_references();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0], "path_var");
+    }
+
+    #[test]
+    fn test_object_with_multiple_element_types() {
+        // Create object with various element types
+        let ast_obj = AstObject {
+            id: "complex_object".to_string(),
+            elements: vec![
+                AstElement::Module {
+                    field: "type".to_string(),
+                    value: "file".to_string(),
+                },
+                AstElement::Field(AstField {
+                    name: "path".to_string(),
+                    value: AstValue::String("/tmp".to_string()),
+                    span: None,
+                }),
+                AstElement::Behavior {
+                    values: vec!["read".to_string(), "write".to_string()],
+                },
+            ],
+            is_global: true,
+            span: None,
+        };
+
+        // Convert
+        let scanner_obj = ObjectDeclaration::from_ast_node(&ast_obj);
+
+        // Verify
+        assert_eq!(scanner_obj.elements.len(), 3);
+        assert_eq!(scanner_obj.element_count(), 3);
+
+        // Check element types using extension trait
+        assert_eq!(scanner_obj.elements[0].element_type_name(), "Module");
+        assert_eq!(scanner_obj.elements[1].element_type_name(), "Field");
+        assert_eq!(scanner_obj.elements[2].element_type_name(), "Behavior");
+    }
+
+    #[test]
+    fn test_object_element_extension_trait() {
+        // Test the extension trait methods
+        let field_elem = AstElement::Field(AstField {
+            name: "test".to_string(),
+            value: AstValue::Variable("var".to_string()),
+            span: None,
+        });
+
+        assert!(field_elem.has_variable_references());
+        assert_eq!(field_elem.get_variable_references(), vec!["var"]);
+        assert!(!field_elem.is_filter());
+
+        let module_elem = AstElement::Module {
+            field: "type".to_string(),
+            value: "file".to_string(),
+        };
+
+        assert!(!module_elem.has_variable_references());
+        assert!(module_elem.get_variable_references().is_empty());
     }
 }

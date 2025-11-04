@@ -11,10 +11,6 @@ keywords = ["esp", "Endpoint State Policy", "scanner"]
 name = "esp_scanner_base"
 crate-type = ["lib", "cdylib"]
 
-[[bin]]
-name = "scanner"
-path = "src/main.rs"
-required-features = ["cli"]
 
 [dependencies]
 # Workspace dependency on esp_compiler

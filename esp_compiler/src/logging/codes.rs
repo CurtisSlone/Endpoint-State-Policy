@@ -298,32 +298,6 @@ pub mod success {
     pub const BLOCK_ORDERING_PASSED: Code = Code::new("I082");
     pub const LIMITS_CHECK_PASSED: Code = Code::new("I083");
     pub const REQUIREMENTS_CHECK_PASSED: Code = Code::new("I084");
-
-    /// FFI transformation error codes
-    pub mod transformation {
-        use super::Code;
-
-        // Core transformation errors
-        pub const TRANSFORMATION_FAILED: Code = Code::new("T001");
-        pub const AST_MAPPING_ERROR: Code = Code::new("T002");
-        pub const CONTEXT_BUILDING_ERROR: Code = Code::new("T003");
-        pub const DEPENDENCY_ANALYSIS_ERROR: Code = Code::new("T004");
-        pub const VARIABLE_PROCESSING_ERROR: Code = Code::new("T005");
-        pub const SET_RESOLUTION_ERROR: Code = Code::new("T006");
-        pub const CROSS_REFERENCE_ERROR: Code = Code::new("T007");
-
-        // Validation and serialization errors
-        pub const SCHEMA_VALIDATION_ERROR: Code = Code::new("T008");
-        pub const JSON_SERIALIZATION_ERROR: Code = Code::new("T009");
-        pub const MEMORY_MANAGEMENT_ERROR: Code = Code::new("T010");
-
-        // Advanced transformation errors
-        pub const METADATA_EXTRACTION_ERROR: Code = Code::new("T011");
-        pub const EXECUTION_ORDER_ERROR: Code = Code::new("T012");
-        pub const SCOPE_MAPPING_ERROR: Code = Code::new("T013");
-        pub const PARTIAL_TRANSFORMATION_ERROR: Code = Code::new("T014");
-        pub const FFI_BOUNDARY_ERROR: Code = Code::new("T015");
-    }
 }
 
 // ============================================================================

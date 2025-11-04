@@ -1,13 +1,14 @@
-//! SET operation execution for ICS SET blocks
+//! SET operation execution for ESP SET blocks
 //! Handles union, intersection, and complement operations in definition order
 
 use super::error::ResolutionError;
-use crate::ffi::logging::{consumer_codes, log_consumer_debug, log_consumer_error};
-use crate::types::object::{ResolvedObject, ResolvedObjectElement};
+use crate::types::object::{ObjectDeclaration, ResolvedObject, ResolvedObjectElement};
 use crate::types::resolution_context::ResolutionContext;
 use crate::types::set::{
     ResolvedSetOperand, ResolvedSetOperation, SetOperand, SetOperation, SetOperationType,
 };
+use esp_compiler::log_error;
+use esp_compiler::logging::codes;
 use std::collections::HashSet;
 
 /// Execute a SET operation and store result in resolution context
@@ -15,28 +16,18 @@ pub fn execute_set_operation(
     set_operation: &SetOperation,
     context: &mut ResolutionContext,
 ) -> Result<ResolvedSetOperation, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing SET operation",
-        &[
-            ("set_id", &set_operation.set_id),
-            ("operation_type", set_operation.operation.as_str()),
-            ("operand_count", &set_operation.operands.len().to_string()),
-            ("has_filter", &set_operation.has_filter().to_string()),
-        ],
-    );
-
     // Validate operand count (already done by parser, but double-check)
     if let Err(validation_error) = set_operation
         .operation
         .validate_operand_count(set_operation.operands.len())
     {
-        let _ = log_consumer_error(
-            consumer_codes::CONSUMER_VALIDATION_ERROR,
+        log_error!(
+            codes::file_processing::INVALID_EXTENSION,
             &format!(
                 "SET operation '{}' validation failed: {}",
                 set_operation.set_id, validation_error
             ),
-            &[("set_id", &set_operation.set_id)],
+            "set_id" => &set_operation.set_id
         );
         return Err(ResolutionError::SetOperationFailed {
             set_id: set_operation.set_id.clone(),
@@ -49,15 +40,6 @@ pub fn execute_set_operation(
     let mut operand_object_lists = Vec::new();
 
     for (operand_index, operand) in set_operation.operands.iter().enumerate() {
-        let _ = log_consumer_debug(
-            "Resolving SET operand",
-            &[
-                ("set_id", &set_operation.set_id),
-                ("operand_index", &operand_index.to_string()),
-                ("operand_type", operand.operand_type_name()),
-            ],
-        );
-
         let (resolved_operand, objects) =
             resolve_set_operand(operand, &set_operation.set_id, operand_index, context)?;
 
@@ -78,32 +60,24 @@ pub fn execute_set_operation(
 
     // Resolve filter if present (using existing filter resolution logic)
     let resolved_filter = if let Some(filter) = &set_operation.filter {
-        let _ = log_consumer_debug(
-            "Resolving SET filter",
-            &[
-                ("set_id", &set_operation.set_id),
-                ("filter_action", filter.action.as_str()),
-                ("state_refs_count", &filter.state_refs.len().to_string()),
-            ],
-        );
-
         // Validate that all state references exist in global states
         for state_ref in &filter.state_refs {
             if !context
                 .global_states
                 .iter()
-                .any(|s| s.identifier == *state_ref)
+                .any(|s| s.identifier == state_ref.state_id)
             {
-                let _ = log_consumer_error(
-                    consumer_codes::CONSUMER_VALIDATION_ERROR,
+                log_error!(
+                    codes::file_processing::INVALID_EXTENSION,
                     &format!(
                         "SET filter references undefined global state '{}' in set '{}'",
-                        state_ref, set_operation.set_id
+                        state_ref.state_id, set_operation.set_id
                     ),
-                    &[("set_id", &set_operation.set_id), ("state_ref", state_ref)],
+                    "set_id" => &set_operation.set_id,
+                    "state_ref" => &state_ref.state_id
                 );
                 return Err(ResolutionError::UndefinedGlobalState {
-                    name: state_ref.clone(),
+                    name: state_ref.state_id.clone(),
                     context: format!("SET filter in set '{}'", set_operation.set_id),
                 });
             }
@@ -111,34 +85,23 @@ pub fn execute_set_operation(
 
         Some(crate::types::filter::ResolvedFilterSpec::new(
             filter.action,
-            filter.state_refs.clone(),
+            filter
+                .state_refs
+                .iter()
+                .map(|sr| sr.state_id.clone())
+                .collect(),
         ))
     } else {
         None
     };
 
+    // FIXED: Use correct field names
     let resolved_set = ResolvedSetOperation {
         set_id: set_operation.set_id.clone(),
         operation: set_operation.operation,
-        resolved_operands,
-        resolved_filter,
+        operands: resolved_operands, // Not "resolved_operands"
+        filter: resolved_filter,     // Not "resolved_filter"
     };
-
-    let _ = log_consumer_debug(
-        "SET operation execution completed",
-        &[
-            ("set_id", &set_operation.set_id),
-            ("operation_type", set_operation.operation.as_str()),
-            (
-                "resolved_operands_count",
-                &resolved_set.resolved_operands.len().to_string(),
-            ),
-            (
-                "has_resolved_filter",
-                &resolved_set.resolved_filter.is_some().to_string(),
-            ),
-        ],
-    );
 
     Ok(resolved_set)
 }
@@ -146,165 +109,130 @@ pub fn execute_set_operation(
 /// Resolve a single SET operand to concrete objects
 fn resolve_set_operand(
     operand: &SetOperand,
-    set_id: &str,
-    operand_index: usize,
+    _set_id: &str,
+    _operand_index: usize,
     context: &ResolutionContext,
 ) -> Result<(ResolvedSetOperand, Vec<ResolvedObject>), ResolutionError> {
-    let _ = log_consumer_debug(
-        "Resolving SET operand",
-        &[
-            ("set_id", set_id),
-            ("operand_index", &operand_index.to_string()),
-            ("operand_type", operand.operand_type_name()),
-        ],
-    );
-
     match operand {
-        SetOperand::ObjectRef(object_id) => {
-            let _ = log_consumer_debug(
-                "Resolving OBJECT_REF operand",
-                &[("object_id", object_id), ("set_id", set_id)],
+        SetOperand::FilteredObjectRef { object_id, filter } => {
+            // Convert filter to resolved filter
+            let resolved_filter = crate::types::filter::ResolvedFilterSpec::new(
+                filter.action,
+                filter
+                    .state_refs
+                    .iter()
+                    .map(|sr| sr.state_id.clone())
+                    .collect(),
             );
 
-            // Look for object in resolved global objects
+            // Return the resolved operand and empty vec (no static objects yet)
+            Ok((
+                ResolvedSetOperand::FilteredObjectRef {
+                    object_id: object_id.clone(),
+                    filter: resolved_filter,
+                },
+                vec![],
+            ))
+        }
+        SetOperand::ObjectRef(object_id) => {
+            // FIXED: Add & for HashMap::get
             if let Some(resolved_object) = context.resolved_global_objects.get(object_id) {
-                let _ = log_consumer_debug(
-                    "OBJECT_REF resolved successfully",
-                    &[("object_id", object_id), ("set_id", set_id)],
-                );
-
                 Ok((
                     ResolvedSetOperand::ObjectRef(object_id.clone()),
                     vec![resolved_object.clone()],
                 ))
             } else {
-                let _ = log_consumer_error(
-                    consumer_codes::CONSUMER_VALIDATION_ERROR,
+                log_error!(
+                    codes::file_processing::INVALID_EXTENSION,
                     &format!(
                         "OBJECT_REF '{}' in SET '{}' not found in resolved global objects",
-                        object_id, set_id
+                        object_id, _set_id
                     ),
-                    &[
-                        ("object_id", object_id),
-                        ("set_id", set_id),
-                        (
-                            "available_objects",
-                            &context
-                                .resolved_global_objects
-                                .keys()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        ),
-                    ],
+                    "object_id" => object_id,
+                    "set_id" => _set_id
                 );
 
                 Err(ResolutionError::UndefinedGlobalObject {
                     name: object_id.clone(),
-                    context: format!("SET operand in set '{}'", set_id),
+                    context: format!("SET operand in set '{}'", _set_id),
                 })
             }
         }
 
         SetOperand::SetRef(referenced_set_id) => {
-            let _ = log_consumer_debug(
-                "Resolving SET_REF operand",
-                &[("referenced_set_id", referenced_set_id), ("set_id", set_id)],
-            );
-
             // Look for set in resolved sets (must be resolved before this set)
             if let Some(resolved_set) = context.resolved_sets.get(referenced_set_id) {
                 // Extract objects from the resolved set's operands
                 let mut objects = Vec::new();
-                for resolved_operand in &resolved_set.resolved_operands {
+                // FIXED: Use correct field name "operands"
+                for resolved_operand in &resolved_set.operands {
                     match resolved_operand {
                         ResolvedSetOperand::ObjectRef(obj_id) => {
+                            // FIXED: Add & for HashMap::get
                             if let Some(resolved_obj) = context.resolved_global_objects.get(obj_id)
                             {
                                 objects.push(resolved_obj.clone());
                             }
                         }
-                        ResolvedSetOperand::InlineObject(resolved_obj) => {
-                            objects.push(resolved_obj.clone());
+                        // FIXED: InlineObject is a struct variant
+                        ResolvedSetOperand::InlineObject { identifier } => {
+                            // Try to find the object by identifier
+                            if let Some(resolved_obj) =
+                                context.resolved_global_objects.get(identifier)
+                            {
+                                objects.push(resolved_obj.clone());
+                            }
                         }
                         ResolvedSetOperand::SetRef(_) => {
                             // Nested set reference - this would require recursive resolution
                             // For now, log a warning and skip
-                            let _ = log_consumer_debug(
-                                "Nested SET_REF detected - recursive resolution not fully implemented",
-                                &[("nested_set_ref", referenced_set_id)],
-                            );
+                        }
+                        ResolvedSetOperand::FilteredObjectRef {
+                            object_id,
+                            filter: _,
+                        } => {
+                            // Include the object
+                            if let Some(resolved_obj) =
+                                context.resolved_global_objects.get(object_id)
+                            {
+                                objects.push(resolved_obj.clone());
+                            }
                         }
                     }
                 }
-
-                let _ = log_consumer_debug(
-                    "SET_REF resolved successfully",
-                    &[
-                        ("referenced_set_id", referenced_set_id),
-                        ("resolved_objects", &objects.len().to_string()),
-                    ],
-                );
 
                 Ok((
                     ResolvedSetOperand::SetRef(referenced_set_id.clone()),
                     objects,
                 ))
             } else {
-                let _ = log_consumer_error(
-                    consumer_codes::CONSUMER_VALIDATION_ERROR,
+                log_error!(
+                    codes::file_processing::INVALID_EXTENSION,
                     &format!(
                         "SET_REF '{}' in SET '{}' not found in resolved sets",
-                        referenced_set_id, set_id
+                        referenced_set_id, _set_id
                     ),
-                    &[
-                        ("referenced_set_id", referenced_set_id),
-                        ("set_id", set_id),
-                        (
-                            "available_sets",
-                            &context
-                                .resolved_sets
-                                .keys()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        ),
-                    ],
+                    "referenced_set_id" => referenced_set_id,
+                    "set_id" => _set_id
                 );
 
                 Err(ResolutionError::UndefinedSet {
                     name: referenced_set_id.clone(),
-                    context: format!("SET operand in set '{}'", set_id),
+                    context: format!("SET operand in set '{}'", _set_id),
                 })
             }
         }
 
         SetOperand::InlineObject(object_decl) => {
-            let _ = log_consumer_debug(
-                "Resolving InlineObject operand",
-                &[
-                    ("object_id", &object_decl.identifier),
-                    ("set_id", set_id),
-                    ("element_count", &object_decl.elements.len().to_string()),
-                ],
-            );
-
             // Resolve inline object using existing object resolution logic
-            let resolved_object = resolve_inline_object(object_decl, context)?;
+            let scanner_obj = ObjectDeclaration::from_ast_node(object_decl);
+            let resolved_object = resolve_inline_object(&scanner_obj, context)?;
 
-            let _ = log_consumer_debug(
-                "InlineObject resolved successfully",
-                &[
-                    ("object_id", &object_decl.identifier),
-                    (
-                        "resolved_elements",
-                        &resolved_object.resolved_elements.len().to_string(),
-                    ),
-                ],
-            );
-
+            // FIXED: Use struct variant syntax
             Ok((
-                ResolvedSetOperand::InlineObject(resolved_object.clone()),
+                ResolvedSetOperand::InlineObject {
+                    identifier: resolved_object.identifier.clone(),
+                },
                 vec![resolved_object],
             ))
         }
@@ -316,88 +244,60 @@ fn resolve_inline_object(
     object_decl: &crate::types::object::ObjectDeclaration,
     context: &ResolutionContext,
 ) -> Result<ResolvedObject, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Resolving inline object fields",
-        &[
-            ("object_id", &object_decl.identifier),
-            ("element_count", &object_decl.elements.len().to_string()),
-        ],
-    );
-
     let mut resolved_elements = Vec::new();
 
     // For now, only handle Field elements (follow existing patterns)
     for element in &object_decl.elements {
-        match element {
-            crate::types::object::ObjectElement::Field { name, value } => {
-                // Resolve the field value using existing field resolver logic
-                let resolved_value = match value {
-                    crate::types::common::Value::String(s) => {
-                        crate::types::common::ResolvedValue::String(s.clone())
+        // FIXED: ObjectElement::Field is a tuple variant in the compiler
+        if let esp_compiler::grammar::ast::nodes::ObjectElement::Field(field) = element {
+            // Resolve the field value using existing field resolver logic
+            let resolved_value = match &field.value {
+                esp_compiler::grammar::ast::nodes::Value::String(s) => {
+                    crate::types::common::ResolvedValue::String(s.clone())
+                }
+                // FIXED: Don't dereference Copy types
+                esp_compiler::grammar::ast::nodes::Value::Integer(i) => {
+                    crate::types::common::ResolvedValue::Integer(*i)
+                }
+                esp_compiler::grammar::ast::nodes::Value::Float(f) => {
+                    crate::types::common::ResolvedValue::Float(*f)
+                }
+                esp_compiler::grammar::ast::nodes::Value::Boolean(b) => {
+                    crate::types::common::ResolvedValue::Boolean(*b)
+                }
+                esp_compiler::grammar::ast::nodes::Value::Variable(var_name) => {
+                    // FIXED: Add & for HashMap::get
+                    if let Some(resolved_var) = context.resolved_variables.get(var_name) {
+                        resolved_var.value.clone()
+                    } else {
+                        return Err(ResolutionError::UndefinedVariable {
+                            name: var_name.clone(),
+                            context: format!("Inline object in SET"),
+                        });
                     }
-                    crate::types::common::Value::Integer(i) => {
-                        crate::types::common::ResolvedValue::Integer(*i)
-                    }
-                    crate::types::common::Value::Float(f) => {
-                        crate::types::common::ResolvedValue::Float(*f)
-                    }
-                    crate::types::common::Value::Boolean(b) => {
-                        crate::types::common::ResolvedValue::Boolean(*b)
-                    }
-                    crate::types::common::Value::Variable(var_name) => {
-                        // Resolve variable reference
-                        if let Some(resolved_var) = context.resolved_variables.get(var_name) {
-                            resolved_var.value.clone()
-                        } else {
-                            return Err(ResolutionError::UndefinedVariable {
-                                name: var_name.clone(),
-                                context: format!(
-                                    "Inline object '{}' field '{}'",
-                                    object_decl.identifier, name
-                                ),
-                            });
-                        }
-                    }
-                };
+                }
+            };
 
-                resolved_elements.push(ResolvedObjectElement::Field {
-                    name: name.clone(),
-                    value: resolved_value,
-                });
-            }
-            _ => {
-                // For other element types, log and skip for now
-                let _ = log_consumer_debug(
-                    "Skipping unsupported inline object element type",
-                    &[
-                        ("element_type", element.element_type_name()),
-                        ("object_id", &object_decl.identifier),
-                    ],
-                );
-            }
+            resolved_elements.push(ResolvedObjectElement::Field {
+                name: field.name.clone(),
+                value: resolved_value,
+            });
         }
+        // Handle other element types as needed
     }
 
     Ok(ResolvedObject {
         identifier: object_decl.identifier.clone(),
         resolved_elements,
-        is_global: false, // Inline objects are never global
+        is_global: object_decl.is_global,
     })
 }
 
-/// Execute UNION operation - combine all unique objects
+/// Execute UNION operation - all objects from all operands (no duplicates)
 fn execute_union(
     object_lists: &[Vec<ResolvedObject>],
-    set_id: &str,
+    _set_id: &str,
 ) -> Result<Vec<ResolvedObject>, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing UNION operation",
-        &[
-            ("set_id", set_id),
-            ("operand_lists_count", &object_lists.len().to_string()),
-        ],
-    );
-
     let mut result_objects = Vec::new();
     let mut seen_identifiers = HashSet::new();
 
@@ -407,23 +307,9 @@ fn execute_union(
             if !seen_identifiers.contains(&object.identifier) {
                 seen_identifiers.insert(object.identifier.clone());
                 result_objects.push(object.clone());
-
-                let _ = log_consumer_debug(
-                    "Added object to UNION result",
-                    &[("object_id", &object.identifier), ("set_id", set_id)],
-                );
             }
         }
     }
-
-    let _ = log_consumer_debug(
-        "UNION operation completed",
-        &[
-            ("set_id", set_id),
-            ("result_count", &result_objects.len().to_string()),
-            ("unique_objects", &seen_identifiers.len().to_string()),
-        ],
-    );
 
     Ok(result_objects)
 }
@@ -431,16 +317,8 @@ fn execute_union(
 /// Execute INTERSECTION operation - objects present in ALL operands
 fn execute_intersection(
     object_lists: &[Vec<ResolvedObject>],
-    set_id: &str,
+    _set_id: &str,
 ) -> Result<Vec<ResolvedObject>, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing INTERSECTION operation",
-        &[
-            ("set_id", set_id),
-            ("operand_lists_count", &object_lists.len().to_string()),
-        ],
-    );
-
     if object_lists.is_empty() {
         return Ok(Vec::new());
     }
@@ -463,21 +341,8 @@ fn execute_intersection(
 
         if exists_in_all {
             result_objects.push(object.clone());
-
-            let _ = log_consumer_debug(
-                "Object found in all operands for INTERSECTION",
-                &[("object_id", &object.identifier), ("set_id", set_id)],
-            );
         }
     }
-
-    let _ = log_consumer_debug(
-        "INTERSECTION operation completed",
-        &[
-            ("set_id", set_id),
-            ("result_count", &result_objects.len().to_string()),
-        ],
-    );
 
     Ok(result_objects)
 }
@@ -485,19 +350,11 @@ fn execute_intersection(
 /// Execute COMPLEMENT operation - objects in first but not in second (A - B)
 fn execute_complement(
     object_lists: &[Vec<ResolvedObject>],
-    set_id: &str,
+    _set_id: &str,
 ) -> Result<Vec<ResolvedObject>, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing COMPLEMENT operation",
-        &[
-            ("set_id", set_id),
-            ("operand_lists_count", &object_lists.len().to_string()),
-        ],
-    );
-
     if object_lists.len() != 2 {
         return Err(ResolutionError::SetOperationFailed {
-            set_id: set_id.to_string(),
+            set_id: _set_id.to_string(),
             reason: format!(
                 "COMPLEMENT requires exactly 2 operands, got {}",
                 object_lists.len()
@@ -520,50 +377,18 @@ fn execute_complement(
     for object in first_list {
         if !second_identifiers.contains(&object.identifier) {
             result_objects.push(object.clone());
-
-            let _ = log_consumer_debug(
-                "Object included in COMPLEMENT result (not in second operand)",
-                &[("object_id", &object.identifier), ("set_id", set_id)],
-            );
         }
     }
-
-    let _ = log_consumer_debug(
-        "COMPLEMENT operation completed",
-        &[
-            ("set_id", set_id),
-            ("first_operand_count", &first_list.len().to_string()),
-            ("second_operand_count", &second_list.len().to_string()),
-            ("result_count", &result_objects.len().to_string()),
-        ],
-    );
 
     Ok(result_objects)
 }
 
 /// Execute all SET operations in definition order
 pub fn resolve_set_operations(context: &mut ResolutionContext) -> Result<(), ResolutionError> {
-    let _ = log_consumer_debug(
-        "Starting SET operations resolution",
-        &[(
-            "set_operations_count",
-            &context.set_operations.len().to_string(),
-        )],
-    );
-
     // Clone set operations to avoid borrow checker issues
     let set_operations = context.set_operations.clone();
 
-    for (set_index, set_operation) in set_operations.iter().enumerate() {
-        let _ = log_consumer_debug(
-            "Processing SET operation",
-            &[
-                ("set_index", &set_index.to_string()),
-                ("set_id", &set_operation.set_id),
-                ("operation_type", set_operation.operation.as_str()),
-            ],
-        );
-
+    for (_set_index, set_operation) in set_operations.iter().enumerate() {
         // Execute the SET operation
         let resolved_set = execute_set_operation(set_operation, context)?;
 
@@ -571,23 +396,7 @@ pub fn resolve_set_operations(context: &mut ResolutionContext) -> Result<(), Res
         context
             .resolved_sets
             .insert(set_operation.set_id.clone(), resolved_set);
-
-        let _ = log_consumer_debug(
-            "SET operation resolved and stored",
-            &[
-                ("set_id", &set_operation.set_id),
-                ("stored_in_context", "true"),
-            ],
-        );
     }
-
-    let _ = log_consumer_debug(
-        "SET operations resolution completed",
-        &[
-            ("total_processed", &set_operations.len().to_string()),
-            ("total_resolved", &context.resolved_sets.len().to_string()),
-        ],
-    );
 
     Ok(())
 }
@@ -595,11 +404,11 @@ pub fn resolve_set_operations(context: &mut ResolutionContext) -> Result<(), Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::common::{ResolvedValue, Value};
-    use crate::types::object::{ObjectDeclaration, ObjectElement};
+    use crate::types::common::ResolvedValue;
+    use crate::types::object::ObjectDeclaration;
     use crate::types::set::{SetOperand, SetOperation, SetOperationType};
     use crate::types::variable::ResolvedVariable;
-    use crate::types::DataType;
+    use esp_compiler::grammar::ast::nodes::DataType;
 
     #[test]
     fn test_union_operation() {
@@ -707,7 +516,7 @@ mod tests {
                 resolved_elements: vec![],
                 is_global: true,
             }],
-            // Missing second operand for complement
+            // Only one operand (complement needs 2)
         ];
 
         let result = execute_complement(&object_lists, "test_bad_complement");

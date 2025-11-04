@@ -1,7 +1,7 @@
 //! # Record Data Traits
 //!
 //! This module defines the core abstractions for handling structured record data
-//! in the ICS SDK. It provides format-agnostic interfaces that allow the SDK
+//! in the ESP SDK. It provides format-agnostic interfaces that allow the SDK
 //! to work with JSON, XML, SQL results, PowerShell objects, and other structured
 //! data sources without being tied to any specific format.
 //!
@@ -12,31 +12,18 @@
 //! - **Type Safe**: Consistent interfaces with compile-time guarantees
 //! - **Performance**: Each format can optimize its access patterns
 //!
-//! ## Usage
-//!
-//! ```rust
-//! use ics_sdk::types::{RecordAccess, FieldPath, ResolvedValue};
-//!
-//! fn validate_record(record: &dyn RecordAccess, path: &FieldPath) -> bool {
-//!     match record.get_field(path) {
-//!         Ok(Some(ResolvedValue::String(s))) => !s.is_empty(),
-//!         Ok(Some(ResolvedValue::Integer(i))) => i > 0,
-//!         Ok(Some(_)) => true, // Other types are valid if present
-//!         _ => false, // Field missing or error
-//!     }
-//! }
-//! ```
 
-use crate::types::common::{FieldPath, ResolvedValue};
-use crate::types::RecordDataError;
+use crate::types::common::ResolvedValue;
+use crate::types::field_path_extensions::{FieldPathExt, PathComponent};
+use crate::types::RecordData;
+use esp_compiler::grammar::FieldPath;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Core trait for reading structured record data in any format
 ///
 /// This trait provides a unified interface for accessing field data regardless
 /// of the underlying storage format (JSON, XML, SQL, etc.). All record types
-/// in the ICS system must implement this trait.
+/// in the ESP system must implement this trait.
 pub trait RecordAccess: Send + Sync + std::fmt::Debug {
     /// Get a field value by path, returning None if the field doesn't exist
     ///
@@ -233,109 +220,60 @@ impl RecordError {
             record_type: record_type.to_string(),
         }
     }
+
+    /// Create an access denied error
+    pub fn access_denied(reason: &str) -> Self {
+        Self::AccessDenied {
+            reason: reason.to_string(),
+        }
+    }
+
+    /// Create a resource limit error
+    pub fn resource_limit(details: &str) -> Self {
+        Self::ResourceLimit {
+            details: details.to_string(),
+        }
+    }
+
+    /// Create an invalid structure error
+    pub fn invalid_structure(details: &str) -> Self {
+        Self::InvalidStructure {
+            details: details.to_string(),
+        }
+    }
 }
 
-/// Default JSON record implementation using your existing RecordData logic
-///
-/// This preserves backward compatibility while providing the new trait interface.
+// ============================================================================
+// JSON RECORD IMPLEMENTATION
+// ============================================================================
+
+/// JSON-based record implementation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRecord {
-    /// The underlying JSON data structure
     data: serde_json::Value,
-    /// Optional metadata about this record
-    metadata: Option<JsonRecordMetadata>,
-}
-
-/// Metadata for JSON records
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRecordMetadata {
-    /// Source of this record (e.g., "parameter", "select", "variable")
-    pub source: Option<String>,
-    /// Schema version if applicable
-    pub schema_version: Option<String>,
-    /// Additional context information
-    pub context: HashMap<String, String>,
 }
 
 impl JsonRecord {
-    /// Create a new JSON record from serde_json::Value
-    pub fn from_json_value(data: serde_json::Value) -> Self {
-        Self {
-            data,
-            metadata: None,
-        }
+    /// Create a new JSON record from a serde_json::Value
+    pub fn from_json_value(value: serde_json::Value) -> Self {
+        Self { data: value }
     }
 
-    /// Create a JSON record from a JSON string
+    /// Create a new JSON record from a JSON string
     pub fn from_json_str(json_str: &str) -> Result<Self, RecordError> {
-        let data = serde_json::from_str(json_str)
+        let value: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| RecordError::parse_error("json", &e.to_string()))?;
-        Ok(Self::from_json_value(data))
+        Ok(Self { data: value })
     }
 
-    /// Create a JSON record from field pairs (for object parameters/select)
-    pub fn from_field_pairs(fields: &[(String, String)]) -> Self {
-        let mut map = serde_json::Map::new();
-        for (key, value) in fields {
-            map.insert(key.clone(), serde_json::Value::String(value.clone()));
-        }
-        Self::from_json_value(serde_json::Value::Object(map))
-    }
-
-    /// Get direct access to the underlying JSON value
+    /// Get the underlying JSON value
     pub fn as_json_value(&self) -> &serde_json::Value {
         &self.data
     }
 
-    /// Set metadata for this record
-    pub fn with_metadata(mut self, metadata: JsonRecordMetadata) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
-    /// Convert ResolvedValue to serde_json::Value for storage
-    fn resolved_value_to_json(value: &ResolvedValue) -> Result<serde_json::Value, RecordError> {
-        match value {
-            ResolvedValue::String(s) => Ok(serde_json::Value::String(s.clone())),
-            ResolvedValue::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
-            ResolvedValue::Float(f) => serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .ok_or_else(|| RecordError::type_conversion("Invalid float value")),
-            ResolvedValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-            ResolvedValue::RecordData(record_data) => Ok(record_data.as_json_value().clone()),
-            ResolvedValue::Binary(_) => Err(RecordError::type_conversion(
-                "Binary data cannot be stored in JSON record",
-            )),
-            ResolvedValue::Version(v) => Ok(serde_json::Value::String(v.clone())),
-            ResolvedValue::EvrString(e) => Ok(serde_json::Value::String(e.clone())),
-            ResolvedValue::Collection(items) => {
-                let json_items: Result<Vec<serde_json::Value>, RecordDataError> = items
-                    .iter()
-                    .map(|item| match item {
-                        ResolvedValue::String(s) => Ok(serde_json::Value::String(s.clone())),
-                        ResolvedValue::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
-                        ResolvedValue::Float(f) => serde_json::Number::from_f64(*f)
-                            .map(serde_json::Value::Number)
-                            .ok_or_else(|| {
-                                RecordDataError::InvalidOperation("Invalid float value".to_string())
-                            }),
-                        ResolvedValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-                        _ => Err(RecordDataError::InvalidOperation(
-                            "Unsupported collection item type".to_string(),
-                        )),
-                    })
-                    .collect();
-
-                json_items.map(serde_json::Value::Array).map_err(|e| {
-                    RecordError::type_conversion(&format!("Collection conversion failed: {:?}", e))
-                })
-            }
-        }
-    }
-
-    /// Convert serde_json::Value to ResolvedValue
-    fn json_value_to_resolved(value: &serde_json::Value) -> Result<ResolvedValue, RecordError> {
-        match value {
+    /// Convert a serde_json::Value to ResolvedValue
+    fn json_value_to_resolved(json_val: &serde_json::Value) -> Result<ResolvedValue, RecordError> {
+        match json_val {
             serde_json::Value::String(s) => Ok(ResolvedValue::String(s.clone())),
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
@@ -347,42 +285,98 @@ impl JsonRecord {
                 }
             }
             serde_json::Value::Bool(b) => Ok(ResolvedValue::Boolean(*b)),
-            serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
-                Ok(ResolvedValue::RecordData(
-                    crate::types::common::RecordData::from_json_value(value.clone()),
+            serde_json::Value::Null => Ok(ResolvedValue::String(String::new())),
+            serde_json::Value::Array(arr) => {
+                let items: Result<Vec<_>, _> =
+                    arr.iter().map(Self::json_value_to_resolved).collect();
+                Ok(ResolvedValue::Collection(items?))
+            }
+            serde_json::Value::Object(_) => {
+                // For nested objects, wrap in RecordData
+                use crate::types::common::RecordData;
+                Ok(ResolvedValue::RecordData(Box::new(
+                    RecordData::from_json_value(json_val.clone()),
+                )))
+            }
+        }
+    }
+
+    /// Convert ResolvedValue to serde_json::Value
+    fn resolved_to_json_value(resolved: &ResolvedValue) -> serde_json::Value {
+        match resolved {
+            ResolvedValue::String(s) => serde_json::Value::String(s.clone()),
+            ResolvedValue::Integer(i) => serde_json::json!(i),
+            ResolvedValue::Float(f) => serde_json::json!(f),
+            ResolvedValue::Boolean(b) => serde_json::Value::Bool(*b),
+            ResolvedValue::Version(v) => serde_json::Value::String(v.clone()),
+            ResolvedValue::EvrString(e) => serde_json::Value::String(e.clone()),
+            ResolvedValue::Collection(items) => {
+                let json_items: Vec<serde_json::Value> =
+                    items.iter().map(Self::resolved_to_json_value).collect();
+                serde_json::Value::Array(json_items)
+            }
+            ResolvedValue::RecordData(record) => record.as_json_value().clone(),
+            ResolvedValue::Binary(bytes) => {
+                // Encode binary as base64 string
+                serde_json::Value::String(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    bytes,
                 ))
             }
-            serde_json::Value::Null => Err(RecordError::type_conversion(
-                "Cannot convert null to ResolvedValue",
-            )),
         }
     }
 }
 
 impl RecordAccess for JsonRecord {
     fn get_field(&self, path: &FieldPath) -> Result<Option<ResolvedValue>, RecordError> {
-        // Navigate through the JSON structure using the field path
-        let mut current = &self.data;
+        let current = &self.data;
 
-        for component in &path.components {
-            current = match current.get(component) {
-                Some(value) => value,
-                None => return Ok(None), // Field doesn't exist
+        // Navigate through path components
+        let components = path.parse_components();
+        for component in &components {
+            match component {
+                PathComponent::Field(field_name) => {
+                    match current.get(field_name) {
+                        Some(value) => value,
+                        None => return Ok(None), // Field doesn't exist
+                    }
+                }
+                PathComponent::Index(idx) => {
+                    match current.get(idx) {
+                        Some(value) => value,
+                        None => return Ok(None), // Index out of bounds
+                    }
+                }
+                PathComponent::Wildcard => {
+                    // Wildcards require special handling - not supported in basic get_field
+                    return Err(RecordError::invalid_path(
+                        &path.to_dot_notation(),
+                        "Wildcard paths not supported in get_field",
+                    ));
+                }
             };
         }
 
-        // Convert the JSON value to ResolvedValue
-        let resolved_value = Self::json_value_to_resolved(current)?;
-        Ok(Some(resolved_value))
+        // Convert final value to ResolvedValue
+        let resolved = Self::json_value_to_resolved(current)?;
+        Ok(Some(resolved))
     }
 
     fn has_field(&self, path: &FieldPath) -> bool {
-        let mut current = &self.data;
+        let current = &self.data;
 
-        for component in &path.components {
-            current = match current.get(component) {
-                Some(value) => value,
-                None => return false,
+        let components = path.parse_components();
+        for component in &components {
+            match component {
+                PathComponent::Field(field_name) => match current.get(field_name) {
+                    Some(value) => value,
+                    None => return false,
+                },
+                PathComponent::Index(idx) => match current.get(idx) {
+                    Some(value) => value,
+                    None => return false,
+                },
+                PathComponent::Wildcard => return false, // Wildcards not supported here
             };
         }
 
@@ -391,100 +385,105 @@ impl RecordAccess for JsonRecord {
 
     fn list_fields(&self) -> Vec<FieldPath> {
         let mut fields = Vec::new();
-        self.collect_field_paths(&self.data, &[], &mut fields);
+        Self::collect_field_paths(&self.data, &mut Vec::new(), &mut fields);
         fields
     }
 
     fn field_count(&self) -> usize {
-        self.count_fields(&self.data)
+        self.list_fields().len()
     }
 
     fn format_hint(&self) -> Option<&str> {
         Some("json")
     }
-
-    fn validate_structure(&self) -> Result<(), RecordError> {
-        // JSON is always structurally valid if it parsed successfully
-        Ok(())
-    }
 }
 
 impl JsonRecord {
-    /// Recursively collect field paths from JSON structure
+    /// Recursively collect all field paths from JSON structure
     fn collect_field_paths(
-        &self,
         value: &serde_json::Value,
-        current_path: &[String],
-        fields: &mut Vec<FieldPath>,
+        current_path: &mut Vec<PathComponent>,
+        result: &mut Vec<FieldPath>,
     ) {
         match value {
             serde_json::Value::Object(map) => {
-                for (key, value) in map {
-                    let mut new_path = current_path.to_vec();
-                    new_path.push(key.clone());
+                for (key, val) in map {
+                    let mut new_path = current_path.clone();
+                    new_path.push(PathComponent::Field(key.clone()));
 
-                    // Add this field path
-                    fields.push(FieldPath::new(new_path.clone()));
-
-                    // Recursively process nested objects/arrays
-                    self.collect_field_paths(value, &new_path, fields);
+                    match val {
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                            // Recurse into nested structures
+                            Self::collect_field_paths(val, &mut new_path, result);
+                        }
+                        _ => {
+                            // Leaf value - add to results
+                            result.push(FieldPath {
+                                components: new_path
+                                    .iter()
+                                    .map(|pc| pc.to_string_component())
+                                    .collect(),
+                            });
+                        }
+                    }
                 }
             }
             serde_json::Value::Array(arr) => {
-                for (index, value) in arr.iter().enumerate() {
-                    let mut new_path = current_path.to_vec();
-                    new_path.push(index.to_string());
+                for (idx, val) in arr.iter().enumerate() {
+                    let mut new_path = current_path.clone();
+                    new_path.push(PathComponent::Index(idx));
 
-                    // Add this field path
-                    fields.push(FieldPath::new(new_path.clone()));
-
-                    // Recursively process array elements
-                    self.collect_field_paths(value, &new_path, fields);
+                    match val {
+                        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                            Self::collect_field_paths(val, &mut new_path, result);
+                        }
+                        _ => {
+                            result.push(FieldPath {
+                                components: new_path
+                                    .iter()
+                                    .map(|pc| pc.to_string_component())
+                                    .collect(),
+                            });
+                        }
+                    }
                 }
             }
             _ => {
-                // Leaf value - path already added by parent
-            }
-        }
-    }
-
-    /// Count total number of leaf fields (values that aren't objects or arrays)
-    fn count_fields(&self, value: &serde_json::Value) -> usize {
-        match value {
-            serde_json::Value::Object(map) => {
-                if map.is_empty() {
-                    1 // Empty object counts as one field
-                } else {
-                    map.values().map(|v| self.count_fields(v)).sum::<usize>()
+                // Leaf value at current path
+                if !current_path.is_empty() {
+                    result.push(FieldPath {
+                        components: current_path
+                            .iter()
+                            .map(|pc| pc.to_string_component())
+                            .collect(),
+                    });
                 }
             }
-            serde_json::Value::Array(arr) => {
-                if arr.is_empty() {
-                    1 // Empty array counts as one field
-                } else {
-                    arr.iter().map(|v| self.count_fields(v)).sum::<usize>()
-                }
-            }
-            _ => 1, // Leaf value
         }
     }
 }
 
 impl RecordAccessMut for JsonRecord {
     fn set_field(&mut self, path: &FieldPath, value: ResolvedValue) -> Result<(), RecordError> {
-        let json_value = Self::resolved_value_to_json(&value)?;
+        if path.components.is_empty() {
+            return Err(RecordError::invalid_path("", "Empty field path"));
+        }
 
-        // Navigate to the parent of the target field, creating structure as needed
+        let json_value = Self::resolved_to_json_value(&value);
+
+        // Navigate or create path to the target field
         let mut current = &mut self.data;
 
         for (i, component) in path.components.iter().enumerate() {
             let is_last = i == path.components.len() - 1;
 
             if is_last {
-                // Set the final field value
+                // Set the final field
                 match current {
                     serde_json::Value::Object(map) => {
-                        map.insert(component.clone(), json_value);
+                        // Convert PathComponent to String for map key
+                        let key = component.to_string();
+                        map.insert(key, json_value);
                         return Ok(());
                     }
                     _ => {
@@ -498,8 +497,10 @@ impl RecordAccessMut for JsonRecord {
                 // Navigate or create intermediate path
                 match current {
                     serde_json::Value::Object(map) => {
+                        // Convert PathComponent to String for map key
+                        let key = component.to_string();
                         current = map
-                            .entry(component.clone())
+                            .entry(key)
                             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
                     }
                     _ => {
@@ -526,7 +527,9 @@ impl RecordAccessMut for JsonRecord {
         for component in &path.components[..path.components.len() - 1] {
             current = match current {
                 serde_json::Value::Object(map) => {
-                    match map.get_mut(component) {
+                    // Convert PathComponent to String for map key
+                    let key = component.to_string();
+                    match map.get_mut(&key) {
                         Some(value) => value,
                         None => return Ok(None), // Parent doesn't exist
                     }
@@ -539,7 +542,9 @@ impl RecordAccessMut for JsonRecord {
         let final_component = &path.components[path.components.len() - 1];
         match current {
             serde_json::Value::Object(map) => {
-                let removed_value = map.remove(final_component);
+                // Convert PathComponent to String for map key
+                let key = final_component.to_string();
+                let removed_value = map.remove(&key);
                 match removed_value {
                     Some(json_val) => {
                         let resolved_val = Self::json_value_to_resolved(&json_val)?;
@@ -608,6 +613,77 @@ impl RecordAdapter for JsonRecordAdapter {
     }
 }
 
+/// Extension trait for RecordData providing scanner-specific operations
+pub trait RecordDataExt {
+    /// Check if a field exists at the given path
+    fn has_field(&self, path: &FieldPath) -> bool;
+
+    /// Get nested field value
+    fn get_nested_field(&self, path: &FieldPath) -> Option<&serde_json::Value>;
+}
+
+impl RecordDataExt for RecordData {
+    fn has_field(&self, path: &FieldPath) -> bool {
+        let components = path.parse_components();
+
+        let mut current = &self.data;
+
+        for component in &components {
+            match component {
+                PathComponent::Field(field_name) => {
+                    if let Some(obj) = current.as_object() {
+                        if let Some(value) = obj.get(field_name) {
+                            current = value;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                PathComponent::Index(idx) => {
+                    if let Some(arr) = current.as_array() {
+                        if let Some(value) = arr.get(*idx) {
+                            current = value;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                PathComponent::Wildcard => {
+                    return true;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn get_nested_field(&self, path: &FieldPath) -> Option<&serde_json::Value> {
+        let components = path.parse_components();
+
+        let mut current = &self.data;
+
+        for component in &components {
+            match component {
+                PathComponent::Field(field_name) => {
+                    current = current.get(field_name)?;
+                }
+                PathComponent::Index(idx) => {
+                    current = current.get(*idx)?;
+                }
+                PathComponent::Wildcard => {
+                    return None;
+                }
+            }
+        }
+
+        Some(current)
+    }
+}
+
 /// Extension trait providing convenience methods for working with records
 pub trait RecordAccessExt: RecordAccess {
     /// Get a field as a specific ResolvedValue variant
@@ -660,21 +736,21 @@ mod tests {
         let record = JsonRecord::from_json_value(json_data);
 
         // Test field access
-        let name_path = FieldPath::from_dot_notation("name");
+        let name_path = FieldPath::from_string("name");
         assert!(record.has_field(&name_path));
 
         let name_value = record.get_field(&name_path).unwrap();
         assert!(matches!(name_value, Some(ResolvedValue::String(ref s)) if s == "test"));
 
         // Test nested field access
-        let nested_path = FieldPath::from_dot_notation("nested.value");
+        let nested_path = FieldPath::from_string("nested.value");
         assert!(record.has_field(&nested_path));
 
         let nested_value = record.get_field(&nested_path).unwrap();
         assert!(matches!(nested_value, Some(ResolvedValue::String(ref s)) if s == "inner"));
 
         // Test non-existent field
-        let missing_path = FieldPath::from_dot_notation("missing");
+        let missing_path = FieldPath::from_string("missing");
         assert!(!record.has_field(&missing_path));
         assert!(matches!(record.get_field(&missing_path).unwrap(), None));
     }
@@ -684,7 +760,7 @@ mod tests {
         let mut record = JsonRecord::from_json_value(serde_json::json!({}));
 
         // Test setting fields
-        let name_path = FieldPath::from_dot_notation("name");
+        let name_path = FieldPath::from_string("name");
         record
             .set_field(&name_path, ResolvedValue::String("test".to_string()))
             .unwrap();
@@ -709,7 +785,7 @@ mod tests {
         assert_eq!(record.format_hint(), Some("json"));
         assert_eq!(record.field_count(), 2);
 
-        let name_path = FieldPath::from_dot_notation("name");
+        let name_path = FieldPath::from_string("name");
         assert!(record.has_field(&name_path));
     }
 }

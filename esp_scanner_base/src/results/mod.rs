@@ -1,23 +1,23 @@
 //! # Scan Results Module
 //!
-//! This module provides types and utilities for ICS compliance validation results.
+//! This module provides types and utilities for ESP compliance validation results.
 //! It handles the generation, serialization, and transformation of scan outcomes
 //! for integration with SIEM/SOAR tools and compliance reporting systems.
 //!
 //! ## Core Types
-//! - [`ScanResult`] - Complete scan result for one ICS definition
+//! - [`ScanResult`] - Complete scan result for one ESP definition
 //! - [`ComplianceFinding`] - Individual compliance violations
-//! - [`ScanMetadata`] - Metadata about scan execution and ICS definition
+//! - [`ScanMetadata`] - Metadata about scan execution and ESP definition
 //! - [`ResultGenerationError`] - Errors that occur during result processing
 //!
 //! ## Usage
 //! ```rust
-//! use ics_sdk::results::{ScanResult, IcsMetadata, HostContext, UserContext};
+//! use esp_scanner_base::results::{ScanResult, EspMetadata, HostContext, UserContext};
 //!
-//! let ics_metadata = IcsMetadata::default_test();
+//! let esp_metadata = EspMetadata::default_test();
 //! let scan_result = ScanResult::new(
 //!     "scan-001".to_string(),
-//!     ics_metadata,
+//!     esp_metadata,
 //!     HostContext::from_system(),
 //!     UserContext::from_environment(),
 //! );

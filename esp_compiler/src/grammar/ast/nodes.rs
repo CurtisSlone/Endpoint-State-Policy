@@ -144,6 +144,14 @@ impl Operation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModuleField {
+    ModuleName,
+    ModuleVersion,
+    ModuleType,
+    ModulePath,
+}
+
 // === LOGICAL OPERATORS ===
 
 /// Logical operators for criteria (EBNF: logical_operator)
@@ -381,6 +389,10 @@ impl FieldPath {
     /// Check if this is a simple (single component) field path
     pub fn is_simple(&self) -> bool {
         self.components.len() == 1
+    }
+
+    pub fn to_dot_notation(&self) -> String {
+        self.components.join(".")
     }
 }
 

@@ -51,8 +51,8 @@ pub use registry::{
 pub use traits::{
     CollectedData, CollectionMetadata, CollectorPerformanceProfile, ComplianceStatus,
     CtnDataCollector, CtnExecutionResult, CtnExecutor, DefaultTestProcessor, ExecutionMetadata,
-    ExistenceResult, FieldValidationResult, ItemCheckResult, StateValidationResult,
-    TestComponentDisplay, TestPhase, TestProcessor,
+    ExistenceResult, FieldValidationResult, ItemCheckResult, StateValidationResult, TestPhase,
+    TestProcessor,
 };
 
 pub use validation::{CtnCompatibilityChecker, CtnContractValidator};

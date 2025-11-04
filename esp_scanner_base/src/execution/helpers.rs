@@ -3,8 +3,9 @@
 //! Centralized helper functions for TEST specification evaluation.
 //! These functions provide consistent logic for all executors to use.
 
-use crate::types::state::EntityCheck;
-use crate::types::test::{ExistenceCheck, ItemCheck, StateJoinOp};
+// FIXED: Import EntityCheck directly from compiler (it's re-exported in types/mod.rs now)
+use crate::types::EntityCheck;
+use crate::types::{ExistenceCheck, ItemCheck, StateJoinOp};
 
 /// Evaluate existence check against collected object counts
 pub fn evaluate_existence_check(

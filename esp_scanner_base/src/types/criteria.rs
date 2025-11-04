@@ -1,7 +1,7 @@
 use super::common::LogicalOp;
 use super::criterion::CriterionDeclaration;
+use crate::types::execution_context::ExecutableCriterion;
 use crate::types::CtnNodeId;
-use crate::ExecutableCriterion;
 use serde::{Deserialize, Serialize};
 
 /// Tree structure for nested criteria evaluation

@@ -1,7 +1,8 @@
-use crate::ffi::logging::{consumer_codes, log_consumer_debug, log_consumer_error};
 use crate::types::common::{ResolvedValue, Value};
 use crate::types::error::FieldResolutionError;
 use crate::types::variable::ResolvedVariable;
+use esp_compiler::logging::codes;
+use esp_compiler::{log_debug, log_error};
 use std::collections::HashMap;
 
 pub struct FieldResolver;
@@ -17,99 +18,78 @@ impl FieldResolver {
         context: &str,
         resolved_variables: &HashMap<String, ResolvedVariable>,
     ) -> Result<ResolvedValue, FieldResolutionError> {
-        let _ = log_consumer_debug(
+        log_debug!(
             "Resolving field value with variable support",
-            &[
-                ("context", context),
-                (
-                    "value_type",
-                    match value {
-                        Value::String(_) => "string",
-                        Value::Integer(_) => "integer",
-                        Value::Float(_) => "float",
-                        Value::Boolean(_) => "boolean",
-                        Value::Variable(_) => "variable",
-                    },
-                ),
-                ("available_variables", &resolved_variables.len().to_string()),
-            ],
+            "context" => context,
+            "value_type" => match value {
+                Value::String(_) => "string",
+                Value::Integer(_) => "integer",
+                Value::Float(_) => "float",
+                Value::Boolean(_) => "boolean",
+                Value::Variable(_) => "variable",
+            },
+            "available_variables" => resolved_variables.len()
         );
 
         let result = match value {
             Value::String(s) => {
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Resolved string value",
-                    &[("context", context), ("length", &s.len().to_string())],
+                    "context" => context,
+                    "length" => s.len()
                 );
                 Ok(ResolvedValue::String(s.clone()))
             }
             Value::Integer(i) => {
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Resolved integer value",
-                    &[("context", context), ("value", &i.to_string())],
+                    "context" => context,
+                    "value" => i
                 );
                 Ok(ResolvedValue::Integer(*i))
             }
             Value::Float(f) => {
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Resolved float value",
-                    &[("context", context), ("value", &f.to_string())],
+                    "context" => context,
+                    "value" => f
                 );
                 Ok(ResolvedValue::Float(*f))
             }
             Value::Boolean(b) => {
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Resolved boolean value",
-                    &[("context", context), ("value", &b.to_string())],
+                    "context" => context,
+                    "value" => b
                 );
                 Ok(ResolvedValue::Boolean(*b))
             }
             Value::Variable(var_name) => {
-                let _ = log_consumer_debug(
+                log_debug!(
                     "Resolving variable reference",
-                    &[
-                        ("variable_name", var_name),
-                        ("context", context),
-                        (
-                            "available_variables",
-                            &resolved_variables
-                                .keys()
-                                .map(|k| k.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        ),
-                    ],
+                    "variable_name" => var_name,
+                    "context" => context,
+                    "available_variables" => resolved_variables.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ").as_str()
                 );
 
                 if let Some(resolved_var) = resolved_variables.get(var_name) {
-                    let _ = log_consumer_debug(
+                    log_debug!(
                         "Variable resolved successfully",
-                        &[
-                            ("variable_name", var_name),
-                            ("resolved_type", &format!("{:?}", resolved_var.data_type)),
-                            ("context", context),
-                        ],
+                        "variable_name" => var_name,
+                        "resolved_type" => format!("{:?}", resolved_var.data_type).as_str(),
+                        "context" => context
                     );
                     Ok(resolved_var.value.clone())
                 } else {
-                    let _ = log_consumer_error(
-                        consumer_codes::CONSUMER_VALIDATION_ERROR,
+                    log_error!(
+                        codes::consumer::CONSUMER_PIPELINE_ERROR,
                         &format!(
                             "Variable reference '{}' could not be resolved in {}",
                             var_name, context
                         ),
-                        &[
-                            ("variable_name", var_name),
-                            ("context", context),
-                            (
-                                "available_variables",
-                                &resolved_variables
-                                    .keys()
-                                    .map(|k| k.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            ),
-                        ],
+                        "variable_name" => var_name,
+                        "context" => context,
+                        "available_variables" => resolved_variables.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ").as_str()
                     );
 
                     // Provide helpful error message based on what variables are available
@@ -137,12 +117,9 @@ impl FieldResolver {
         };
 
         if result.is_err() {
-            let _ = log_consumer_debug("Field resolution failed", &[("context", context)]);
+            log_debug!("Field resolution failed", "context" => context);
         } else {
-            let _ = log_consumer_debug(
-                "Field resolution completed successfully",
-                &[("context", context)],
-            );
+            log_debug!("Field resolution completed successfully", "context" => context);
         }
 
         result

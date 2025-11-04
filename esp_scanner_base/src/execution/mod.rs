@@ -2,11 +2,11 @@ pub mod behavior;
 pub mod comparisons;
 pub mod deferred_ops;
 pub mod engine;
-// pub mod entity_check;
+pub mod entity_check;
 pub mod helpers;
-// pub mod module_version;
-pub mod structured_params;
+pub mod module_version;
 pub mod record_validation;
+pub mod structured_params;
 // REMOVED: ComplianceStatus export (use from strategies module instead)
 // Export only engine-specific types
 pub use engine::{CtnResult, ExecutionEngine, ExecutionError};
@@ -18,5 +18,5 @@ pub use helpers::{
 };
 // Comparison utilities
 pub use comparisons::{binary, collection, evr, string, ComparisonExt};
-pub use structured_params::parse_parameters;
 pub use record_validation::{validate_record_checks, RecordValidationResult};
+pub use structured_params::parse_parameters;

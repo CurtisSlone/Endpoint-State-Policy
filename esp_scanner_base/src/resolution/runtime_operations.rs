@@ -1,11 +1,13 @@
 //! Runtime operation execution for ICS RUN blocks
 //! Handles literal-only operations as Phase 1 implementation
 
-use crate::ffi::logging::{consumer_codes, log_consumer_debug, log_consumer_error};
 use crate::resolution::error::ResolutionError;
 use crate::types::common::{ResolvedValue, Value};
+use crate::types::runtime_operation::RunParameterExt;
 use crate::types::runtime_operation::{RunParameter, RuntimeOperation, RuntimeOperationType};
 use crate::types::variable::ResolvedVariable;
+use esp_compiler::log_error;
+use esp_compiler::logging::codes;
 use regex::Regex;
 use std::collections::HashMap;
 
@@ -14,14 +16,6 @@ pub fn execute_runtime_operation(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing runtime operation",
-        &[
-            ("operation_type", operation.operation_type.as_str()),
-            ("target_variable", &operation.target_variable),
-        ],
-    );
-
     match operation.operation_type {
         RuntimeOperationType::Concat => execute_concat(operation, resolved_variables),
         RuntimeOperationType::Arithmetic => execute_arithmetic(operation, resolved_variables),
@@ -33,23 +27,6 @@ pub fn execute_runtime_operation(
         RuntimeOperationType::Unique => execute_unique(operation, resolved_variables),
         RuntimeOperationType::Merge => execute_merge(operation, resolved_variables),
         RuntimeOperationType::End => execute_end(operation, resolved_variables),
-        _ => {
-            let _ = log_consumer_error(
-                consumer_codes::CONSUMER_VALIDATION_ERROR,
-                &format!(
-                    "Runtime operation type {:?} not yet implemented",
-                    operation.operation_type
-                ),
-                &[("operation_type", operation.operation_type.as_str())],
-            );
-            Err(ResolutionError::RuntimeOperationFailed {
-                operation: operation.target_variable.clone(),
-                reason: format!(
-                    "Operation type {:?} not implemented",
-                    operation.operation_type
-                ),
-            })
-        }
     }
 }
 
@@ -57,14 +34,6 @@ fn execute_arithmetic(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing ARITHMETIC operation",
-        &[
-            ("target_variable", &operation.target_variable),
-            ("parameter_count", &operation.parameters.len().to_string()),
-        ],
-    );
-
     let mut current_value: f64 = 0.0;
     let mut has_initial_value = false;
 
@@ -82,7 +51,7 @@ fn execute_arithmetic(
                     has_initial_value = true;
                 }
             }
-            RunParameter::ArithmeticOp { operator, operand } => {
+            RunParameter::ArithmeticOp(operator, operand) => {
                 let operand_value = extract_operand_value(
                     operand,
                     resolved_variables,
@@ -201,14 +170,6 @@ fn execute_concat(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing CONCAT operation",
-        &[
-            ("target_variable", &operation.target_variable),
-            ("parameter_count", &operation.parameters.len().to_string()),
-        ],
-    );
-
     let mut result = String::new();
 
     for (param_index, parameter) in operation.parameters.iter().enumerate() {
@@ -285,25 +246,7 @@ fn execute_concat(
         };
 
         result.push_str(&string_value);
-
-        let _ = log_consumer_debug(
-            "CONCAT parameter processed",
-            &[
-                ("parameter_index", &param_index.to_string()),
-                ("string_value", &string_value),
-                ("current_result_length", &result.len().to_string()),
-            ],
-        );
     }
-
-    let _ = log_consumer_debug(
-        "CONCAT operation completed",
-        &[
-            ("target_variable", &operation.target_variable),
-            ("final_result", &result),
-            ("result_length", &result.len().to_string()),
-        ],
-    );
 
     Ok(ResolvedValue::String(result))
 }
@@ -412,11 +355,6 @@ fn execute_split(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing SPLIT operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // Find the input string and delimiter
     let mut input_string: Option<String> = None;
     let mut delimiter: Option<String> = None;
@@ -481,16 +419,6 @@ fn execute_split(
         .map(|s| ResolvedValue::String(s.to_string()))
         .collect();
 
-    let _ = log_consumer_debug(
-        "SPLIT operation completed",
-        &[
-            ("target_variable", &operation.target_variable),
-            ("input", &input),
-            ("delimiter", &delim),
-            ("result_parts", &parts.len().to_string()),
-        ],
-    );
-
     Ok(ResolvedValue::Collection(collection))
 }
 
@@ -498,11 +426,6 @@ fn execute_substring(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing SUBSTRING operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     let mut input_string: Option<String> = None;
     let mut start_pos: Option<i64> = None;
     let mut length: Option<i64> = None;
@@ -570,26 +493,12 @@ fn execute_substring(
         input.chars().skip(start).take(end - start).collect()
     };
 
-    let _ = log_consumer_debug(
-        "SUBSTRING operation completed",
-        &[
-            ("start_pos", &start.to_string()),
-            ("length", &len.to_string()),
-            ("result_length", &result.len().to_string()),
-        ],
-    );
-
     Ok(ResolvedValue::String(result))
 }
 fn execute_count(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing COUNT operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // COUNT operation counts characters in a string (literal-only implementation)
     for parameter in &operation.parameters {
         match parameter {
@@ -613,11 +522,6 @@ fn execute_count(
                         }
                     };
 
-                    let _ = log_consumer_debug(
-                        "COUNT operation completed",
-                        &[("count_result", &count.to_string())],
-                    );
-
                     return Ok(ResolvedValue::Integer(count));
                 } else {
                     return Err(ResolutionError::UndefinedVariable {
@@ -640,11 +544,6 @@ fn execute_count(
                     }
                 };
 
-                let _ = log_consumer_debug(
-                    "COUNT operation completed",
-                    &[("count_result", &count.to_string())],
-                );
-
                 return Ok(ResolvedValue::Integer(count));
             }
             _ => {} // Continue to next parameter
@@ -661,11 +560,6 @@ fn execute_regex_capture(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing REGEX_CAPTURE operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     let mut input_string: Option<String> = None;
     let mut pattern: Option<String> = None;
 
@@ -718,14 +612,12 @@ fn execute_regex_capture(
 
     // Compile regex with proper error handling
     let regex = Regex::new(&regex_pattern).map_err(|regex_error| {
-        let _ = log_consumer_error(
-            consumer_codes::CONSUMER_VALIDATION_ERROR,
+        log_error!(
+            codes::file_processing::INVALID_EXTENSION,
             &format!("Invalid regex pattern '{}': {}", regex_pattern, regex_error),
-            &[
-                ("target_variable", &operation.target_variable),
-                ("pattern", &regex_pattern),
-                ("regex_error", &regex_error.to_string()),
-            ],
+            "target_variable" => operation.target_variable.as_str(),
+            "pattern" => regex_pattern.as_str(),
+            "regex_error" => regex_error.to_string().as_str()
         );
         ResolutionError::RuntimeOperationFailed {
             operation: operation.target_variable.clone(),
@@ -754,17 +646,6 @@ fn execute_regex_capture(
         String::new()
     };
 
-    let _ = log_consumer_debug(
-        "REGEX_CAPTURE operation completed",
-        &[
-            ("pattern", &regex_pattern),
-            ("input_length", &input.len().to_string()),
-            ("result_length", &result.len().to_string()),
-            ("match_found", &(!result.is_empty()).to_string()),
-            ("capture_groups", &regex.captures_len().to_string()),
-        ],
-    );
-
     Ok(ResolvedValue::String(result))
 }
 
@@ -772,27 +653,18 @@ fn execute_extract(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing EXTRACT operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // Find the ObjectExtraction parameter
     for parameter in &operation.parameters {
         if let RunParameter::ObjectExtraction { object_id, field } = parameter {
-            let _ = log_consumer_debug(
-                "Processing ObjectExtraction parameter",
-                &[("object_id", object_id), ("field", field)],
-            );
-
             // Look for the object in resolved variables (from global objects)
             if let Some(resolved_var) = resolved_variables.get(object_id) {
                 match &resolved_var.value {
                     ResolvedValue::RecordData(record_data) => {
                         // Extract field from record data using dot notation
                         let field_path = vec![field.clone()];
-                        match record_data.get_field_by_path(&field_path) {
-                            Ok(json_value) => {
+                        // TODO: WE dont use json anymore. Fix RUN oeprations
+                        match record_data.get_field_by_path(&field_path.join(".")) {
+                            Some(json_value) => {
                                 // Convert JSON value to ResolvedValue
                                 let result = match json_value {
                                     serde_json::Value::String(s) => {
@@ -823,21 +695,9 @@ fn execute_extract(
                                     }
                                 };
 
-                                let _ = log_consumer_debug(
-                                    "EXTRACT operation completed successfully",
-                                    &[
-                                        ("object_id", object_id),
-                                        ("field", field),
-                                        (
-                                            "result_type",
-                                            &format!("{:?}", std::mem::discriminant(&result)),
-                                        ),
-                                    ],
-                                );
-
                                 return Ok(result);
                             }
-                            Err(_) => {
+                            None => {
                                 return Err(ResolutionError::RuntimeOperationFailed {
                                     operation: operation.target_variable.clone(),
                                     reason: format!(
@@ -852,10 +712,6 @@ fn execute_extract(
                         // If the object resolved to a string, treat field name as property
                         // This is a simple fallback for non-record objects
                         if field == "value" || field == "content" {
-                            let _ = log_consumer_debug(
-                                "EXTRACT from string object",
-                                &[("field", field), ("string_length", &s.len().to_string())],
-                            );
                             return Ok(ResolvedValue::String(s.clone()));
                         } else {
                             return Err(ResolutionError::RuntimeOperationFailed {
@@ -897,18 +753,8 @@ fn execute_unique(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing UNIQUE operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // Get source variable name from parameters
     let source_var_name = extract_source_variable(operation)?;
-
-    let _ = log_consumer_debug(
-        "UNIQUE source variable identified",
-        &[("source_variable", &source_var_name)],
-    );
 
     // Get the collection from the resolved variable
     let collection = get_collection_from_variable(
@@ -916,14 +762,6 @@ fn execute_unique(
         resolved_variables,
         &operation.target_variable,
     )?;
-
-    let _ = log_consumer_debug(
-        "UNIQUE input collection retrieved",
-        &[
-            ("source_variable", &source_var_name),
-            ("item_count", &collection.len().to_string()),
-        ],
-    );
 
     // Deduplicate using HashMap with Debug format as key
     let mut seen = HashMap::new();
@@ -937,15 +775,6 @@ fn execute_unique(
         }
     }
 
-    let _ = log_consumer_debug(
-        "UNIQUE operation completed",
-        &[
-            ("input_count", &seen.len().to_string()),
-            ("output_count", &unique_items.len().to_string()),
-            ("duplicates_removed", &(seen.len() - unique_items.len()).to_string()),
-        ],
-    );
-
     Ok(ResolvedValue::Collection(unique_items))
 }
 
@@ -954,11 +783,6 @@ fn execute_merge(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing MERGE operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // Get ALL variable names from parameters
     let var_names = extract_all_variables(operation)?;
 
@@ -969,17 +793,8 @@ fn execute_merge(
         });
     }
 
-    let _ = log_consumer_debug(
-        "MERGE source variables identified",
-        &[
-            ("variable_count", &var_names.len().to_string()),
-            ("variables", &var_names.join(", ")),
-        ],
-    );
-
     // Collect all items from all collections
     let mut merged_items = Vec::new();
-    let mut total_input_items = 0;
 
     for var_name in var_names {
         let collection = get_collection_from_variable(
@@ -988,24 +803,10 @@ fn execute_merge(
             &operation.target_variable,
         )?;
 
-        let item_count = collection.len();
-        total_input_items += item_count;
-
-        let _ = log_consumer_debug(
-            "MERGE adding collection",
-            &[("variable", &var_name), ("item_count", &item_count.to_string())],
-        );
+        let _item_count = collection.len();
 
         merged_items.extend(collection);
     }
-
-    let _ = log_consumer_debug(
-        "MERGE operation completed",
-        &[
-            ("total_input_items", &total_input_items.to_string()),
-            ("output_count", &merged_items.len().to_string()),
-        ],
-    );
 
     Ok(ResolvedValue::Collection(merged_items))
 }
@@ -1015,82 +816,40 @@ fn execute_end(
     operation: &RuntimeOperation,
     resolved_variables: &HashMap<String, ResolvedVariable>,
 ) -> Result<ResolvedValue, ResolutionError> {
-    let _ = log_consumer_debug(
-        "Executing END operation",
-        &[("target_variable", &operation.target_variable)],
-    );
-
     // Get source variable name from parameters
     let source_var_name = extract_source_variable(operation)?;
 
-    let _ = log_consumer_debug(
-        "END source variable identified",
-        &[("source_variable", &source_var_name)],
-    );
-
     // Get resolved variable
-    let resolved_var = resolved_variables
-        .get(&source_var_name)
-        .ok_or_else(|| ResolutionError::UndefinedVariable {
+    let resolved_var = resolved_variables.get(&source_var_name).ok_or_else(|| {
+        ResolutionError::UndefinedVariable {
             name: source_var_name.clone(),
             context: "END operation".to_string(),
-        })?;
+        }
+    })?;
 
     // Handle different types
     let result = match &resolved_var.value {
         ResolvedValue::Collection(items) => {
-            let _ = log_consumer_debug(
-                "END processing collection",
-                &[("item_count", &items.len().to_string())],
-            );
-
             // Return last item or empty string if collection is empty
             if let Some(last) = items.last() {
-                let _ = log_consumer_debug(
-                    "END returning last element",
-                    &[(
-                        "element_type",
-                        &format!("{:?}", std::mem::discriminant(last)),
-                    )],
-                );
                 last.clone()
             } else {
-                let _ = log_consumer_debug("END collection empty, returning empty string", &[]);
                 ResolvedValue::String(String::new())
             }
         }
         ResolvedValue::String(s) => {
-            let _ = log_consumer_debug(
-                "END processing string",
-                &[("string_length", &s.len().to_string())],
-            );
-
             // For strings, return last character
             if let Some(last_char) = s.chars().last() {
-                let _ = log_consumer_debug(
-                    "END returning last character",
-                    &[("character", &last_char.to_string())],
-                );
                 ResolvedValue::String(last_char.to_string())
             } else {
-                let _ = log_consumer_debug("END string empty, returning empty string", &[]);
                 ResolvedValue::String(String::new())
             }
         }
         other => {
-            let _ = log_consumer_debug(
-                "END returning scalar value as-is",
-                &[(
-                    "value_type",
-                    &format!("{:?}", std::mem::discriminant(other)),
-                )],
-            );
             // For other types, return the value itself
             other.clone()
         }
     };
-
-    let _ = log_consumer_debug("END operation completed", &[]);
 
     Ok(result)
 }
@@ -1143,12 +902,13 @@ fn get_collection_from_variable(
     resolved_variables: &HashMap<String, ResolvedVariable>,
     operation_name: &str,
 ) -> Result<Vec<ResolvedValue>, ResolutionError> {
-    let resolved_var = resolved_variables
-        .get(var_name)
-        .ok_or_else(|| ResolutionError::UndefinedVariable {
-            name: var_name.to_string(),
-            context: format!("{} operation", operation_name),
-        })?;
+    let resolved_var =
+        resolved_variables
+            .get(var_name)
+            .ok_or_else(|| ResolutionError::UndefinedVariable {
+                name: var_name.to_string(),
+                context: format!("{} operation", operation_name),
+            })?;
 
     match &resolved_var.value {
         ResolvedValue::Collection(items) => Ok(items.clone()),
