@@ -25,308 +25,108 @@ ESP is a declarative policy language that enables security teams to define **wha
 META
     version `1.0.0`
     esp_version `1.0`
-    author `ESP-Test-Suite`
-    date `2025-11-04`
-    severity `high`
-    platform `linux`
-    description `SET operations test using OBJECT_REF pattern`
-    control_framework `TEST`
-    control `SET-OPS-FINAL`
-    esp_scan_id `set-ops-object-ref`
-    criticality `high`
-    tags `linux,set-operations,validation,corrected`
+    author `DISA-CISA-MITRE`
+    control_framework `MITRE_ATTCK`
+    control `T1053.005`
+    description `Detect malicious cron persistence`
 META_END
 
 DEF
-    # ========================================================================
-    # VARIABLES
-    # ========================================================================
 
-    VAR passwd_path string `scanfiles/passwd`
-    VAR shadow_path string `scanfiles/shadow`
-    VAR sshd_config_path string `scanfiles/sshd_config`
-    VAR sudoers_path string `scanfiles/sudoers`
-    VAR hosts_allow_path string `scanfiles/hosts.allow`
-    VAR hosts_deny_path string `scanfiles/hosts.deny`
+# Variables
+VAR system_crontab string `/etc/crontab`
+VAR cron_dirs string `/etc/cron.d`
+VAR suspicious_cmds string `curl|wget|nc|bash -i|base64`
 
-    VAR required_owner_uid string `0`
-    VAR required_group_gid string `0`
+# Runtime - Calculate 30-day threshold
+RUN age_threshold ARITHMETIC
+    literal 30
+    * 86400
+RUN_END
 
-    # ========================================================================
-    # STATES
-    # ========================================================================
+# Objects
+OBJECT system_cron
+    path `/etc`
+    filename `crontab`
 
-    STATE file_exists
-        exists boolean = true
-    STATE_END
+    select record
+        content text
+        modified_time mtime
+    select_end
+OBJECT_END
 
-    STATE file_readable
-        exists boolean = true
-        readable boolean = true
-    STATE_END
+OBJECT cron_directory
+    path VAR cron_dirs
+    filename `*`
+    behavior recurse false
 
-    STATE secure_ownership
-        file_owner string = VAR required_owner_uid
-        file_group string = VAR required_group_gid
-        exists boolean = true
-    STATE_END
+    select record
+        content text
+    select_end
+OBJECT_END
 
-    # ========================================================================
-    # OBJECTS - Actual files
-    # ========================================================================
+OBJECT user_crons
+    path `/var/spool/cron`
+    filename `*`
 
-    OBJECT passwd_file
-        path VAR passwd_path
-    OBJECT_END
+    select record
+        content text
+        owner uid
+    select_end
+OBJECT_END
 
-    OBJECT shadow_file
-        path VAR shadow_path
-    OBJECT_END
+# States
+STATE no_suspicious_content
+    content string not_contains `curl`
+    content string not_contains `wget`
+    content string not_contains `bash -i`
+STATE_END
 
-    OBJECT sshd_config_file
-        path VAR sshd_config_path
-    OBJECT_END
+STATE secure_ownership
+    owner string = `0`
+STATE_END
 
-    OBJECT sudoers_file
-        path VAR sudoers_path
-    OBJECT_END
+STATE recently_modified
+    modified_time int >= VAR age_threshold
+STATE_END
 
-    OBJECT hosts_allow_file
-        path VAR hosts_allow_path
-    OBJECT_END
+# Sets - Aggregate all cron locations
+SET all_cron_files union
+    OBJECT_REF system_cron
+    OBJECT_REF cron_directory
+    OBJECT_REF user_crons
+    FILTER include
+        STATE_REF no_suspicious_content
+    FILTER_END
+SET_END
 
-    OBJECT hosts_deny_file
-        path VAR hosts_deny_path
-    OBJECT_END
+# Criteria - Detection logic
+CRI AND
+    # Check system crontab
+    CTN system_check
+        TEST all all
+        STATE_REF no_suspicious_content
+        STATE_REF secure_ownership
+        OBJECT_REF system_cron
+    CTN_END
 
-    # ========================================================================
-    # SET OPERATIONS
-    # ========================================================================
-
-    SET critical_system_files union
-        OBJECT_REF passwd_file
-        OBJECT_REF shadow_file
-    SET_END
-
-    SET security_config_files union
-        OBJECT_REF sshd_config_file
-        OBJECT_REF sudoers_file
-        OBJECT_REF hosts_allow_file
-    SET_END
-
-    SET access_control_files union
-        OBJECT_REF hosts_allow_file
-        OBJECT_REF hosts_deny_file
-    SET_END
-
-    SET all_security_files union
-        SET_REF critical_system_files
-        SET_REF security_config_files
-        SET_REF access_control_files
-    SET_END
-
-    SET group_a union
-        OBJECT_REF passwd_file
-        OBJECT_REF sshd_config_file
-        OBJECT_REF sudoers_file
-    SET_END
-
-    SET group_b union
-        OBJECT_REF sshd_config_file
-        OBJECT_REF sudoers_file
-        OBJECT_REF hosts_allow_file
-    SET_END
-
-    SET common_files intersection
-        SET_REF group_a
-        SET_REF group_b
-    SET_END
-
-    SET all_configs union
-        OBJECT_REF sshd_config_file
-        OBJECT_REF sudoers_file
-        OBJECT_REF hosts_allow_file
-    SET_END
-
-    SET exclude_configs union
-        OBJECT_REF sudoers_file
-    SET_END
-
-    SET remaining_configs complement
-        SET_REF all_configs
-        SET_REF exclude_configs
-    SET_END
-
-    # ========================================================================
-    # GLOBAL OBJECTS - Containers for SET_REF
-    # These can be referenced with OBJECT_REF in CTN
-    # ========================================================================
-
-    OBJECT critical_files_container
-        SET_REF critical_system_files
-    OBJECT_END
-
-    OBJECT security_configs_container
-        SET_REF security_config_files
-    OBJECT_END
-
-    OBJECT all_files_container
-        SET_REF all_security_files
-    OBJECT_END
-
-    OBJECT common_files_container
-        SET_REF common_files
-    OBJECT_END
-
-    OBJECT remaining_configs_container
-        SET_REF remaining_configs
-    OBJECT_END
-
-    # ========================================================================
-    # TEST 1: Basic UNION via OBJECT_REF
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST all all
-            STATE_REF file_exists
-            OBJECT_REF critical_files_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 2: UNION with Three Operands
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
+    # Check for recent suspicious changes
+    CRI NOT
+        CTN detect_suspicious_mods
             TEST any all
-            STATE_REF file_exists
-            OBJECT_REF security_configs_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 3: Nested UNION (3 SET_REF deep)
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST any all
-            STATE_REF file_readable
-            OBJECT_REF all_files_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 4: INTERSECTION Operation
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST all all
-            STATE_REF file_exists
-            OBJECT_REF common_files_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 5: COMPLEMENT Operation
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST all all
-            STATE_REF file_exists
-            OBJECT_REF remaining_configs_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 6: Mixed OBJECT_REF - Direct and Container
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST any all
-            STATE_REF file_exists
-            OBJECT_REF passwd_file
-            OBJECT_REF security_configs_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 7: Multiple Container References
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST any all
-            STATE_REF file_exists
-            OBJECT_REF critical_files_container
-            OBJECT_REF security_configs_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 8: OR Criteria with Containers
-    # ========================================================================
-
-    CRI OR
-        CTN file_metadata
-            TEST all all
-            STATE_REF secure_ownership
-            OBJECT_REF critical_files_container
-        CTN_END
-
-        CTN file_metadata
-            TEST all all
-            STATE_REF file_readable
-            OBJECT_REF security_configs_container
-        CTN_END
-    CRI_END
-
-    # ========================================================================
-    # TEST 9: Local Object with SET_REF (Alternative Pattern)
-    # ========================================================================
-
-    CRI AND
-        CTN file_metadata
-            TEST all all
-            STATE_REF file_exists
-            OBJECT local_set_ref
-                SET_REF critical_system_files
+            STATE suspicious_and_recent
+                content string pattern_match VAR suspicious_cmds
+                modified_time int >= VAR age_threshold
+            STATE_END
+            OBJECT set_check
+                SET_REF all_cron_files
             OBJECT_END
         CTN_END
     CRI_END
-
-    # ========================================================================
-    # TEST 10: Chained Operations
-    # ========================================================================
-
-    SET step1 union
-        SET_REF critical_system_files
-        SET_REF access_control_files
-    SET_END
-
-    SET step2 complement
-        SET_REF step1
-        SET_REF security_config_files
-    SET_END
-
-    OBJECT chained_container
-        SET_REF step2
-    OBJECT_END
-
-    CRI AND
-        CTN file_metadata
-            TEST any all
-            STATE_REF file_exists
-            OBJECT_REF chained_container
-        CTN_END
-    CRI_END
+CRI_END
 
 DEF_END
+
 
 ```
 
@@ -713,54 +513,193 @@ pub fn create_scanner_registry() -> Result<CtnStrategyRegistry> {
 ### Policy Structure
 
 ```esp
-DEFINITION policy_name
-MODULE esp 1.0.0
+# Microsoft Entra MFA Compliance Verification
+# Verify user accounts require Multi-Factor Authentication
 
-METADATA
-    title `Policy Title`
-    description `Policy description`
-    version `1.0.0`
-METADATA_END
+META
+version `1.0.0`
+ics_version `1.0`
+author `compliance-team`
+date `2024-01-20`
+severity `high`
+platform `microsoft-entra`
+description `Verify user accounts require MFA through Conditional Access policies`
+compliance_framework `Security-Controls`
+tags `mfa,conditional-access,security,microsoft-entra`
+META_END
 
-# Variables
-VAR variable_name type `value`
+DEF
+# Variables for MFA policy validation
+VAR admin_center_url string `https://entra.microsoft.com`
+VAR conditional_access_path string `Identity/Protection/ConditionalAccess`
+VAR policy_required_state string `On`
+VAR users_scope_required string `All users included`
 
-# Objects (what to check)
-OBJECT object_name
-    field_name VAR variable_name
-OBJECT_END
-
-# States (desired conditions)
-STATE state_name
-    field_name type operation value
+# Global state for MFA policy validation
+STATE mfa_policy_state_check
+    policy_state string = VAR policy_required_state
+    policy_enabled boolean = true
 STATE_END
 
-# Filters (object selection)
-FILTER filter_name
-    STATE_REF state_name
-    ACTION include|exclude
-FILTER_END
+STATE mfa_user_scope_check
+    users_included string = VAR users_scope_required
+    all_users_covered boolean = true
+STATE_END
 
-# Sets (object groups)
-SET set_name
-    OBJECT object1
-    OBJECT object2
-SET_END
+STATE mfa_exclusion_validation
+    exclusions_documented boolean = true
+    ao_approval_required boolean = true
+STATE_END
 
-# Runtime computations
-RUN computation_name
-    PARAM param_name type value
-    OPERATION operation_type param1 param2
-    OUTPUT variable_name
-RUN_END
+# Global objects for different validation steps
+OBJECT entra_admin_center
+    url VAR admin_center_url
+    access_path VAR conditional_access_path
+    required_role `Conditional Access Administrator`
 
-# Criteria (validation rules)
-CTN ctn_type
-    BEHAVIOR behavior_name param value
-    TEST existence_check item_check
-    STATE_REF state_name
-    OBJECT_REF object_name
+    parameters string
+        authentication_method `admin_credentials`
+        session_timeout `3600`
+    parameters_end
+OBJECT_END
+
+OBJECT conditional_access_policies
+    navigation_path `Identity >> Protection >> Conditional Access`
+    policy_section `Policies`
+
+    select string
+        PolicyName `MFA Policy Name`
+        PolicyState `Policy State`
+        UsersScope `Users Configuration`
+        Exclusions `Excluded Users`
+    select_end
+
+    behavior verify_policy_existence check_state validate_scope
+OBJECT_END
+
+OBJECT mfa_policy_configuration
+    policy_type `MFA Enforcement`
+
+    parameters record_data
+        PolicyState `On`
+        UsersIncluded `All users included`
+        ExclusionDocumentation `Required with AO approval`
+        ComplianceValidation `Mandatory`
+    parameters_end
+OBJECT_END
+
+# Criteria for MFA compliance verification
+CRI AND
+
+# Step 1-3: Access admin center and navigate to Conditional Access
+CTN admin_center_access
+    TEST any all AND
+    STATE_REF mfa_policy_state_check
+    OBJECT_REF entra_admin_center
+
+    # Local validation for admin access
+    STATE admin_access_validation
+        admin_role string contains `Conditional Access Administrator`
+        access_granted boolean = true
+        navigation_successful boolean = true
+    STATE_END
 CTN_END
+
+# Step 4: Verify policy state is "On"
+CTN policy_state_verification
+    TEST all all AND
+    STATE_REF mfa_policy_state_check
+    OBJECT_REF conditional_access_policies
+
+    # Local state for policy state validation
+    STATE policy_state_validation
+        state_value string = `On`
+        state_verified boolean = true
+        finding_if_off boolean = true
+    STATE_END
+CTN_END
+
+# Step 5: Verify "All users included" is specified
+CTN user_scope_verification
+    TEST all all AND
+    STATE_REF mfa_user_scope_check
+    OBJECT_REF mfa_policy_configuration
+
+    # Local state for user scope validation
+    STATE scope_validation
+        users_setting string = `All users included`
+        scope_verified boolean = true
+        complete_coverage boolean = true
+    STATE_END
+CTN_END
+
+# Step 6: Verify exclusions are documented with AO
+CTN exclusion_documentation_check
+    TEST all all OR
+    STATE_REF mfa_exclusion_validation
+
+    # Local state for exclusion validation
+    STATE exclusion_validation
+        exclusions_exist boolean = false
+        documentation_complete boolean = true
+        ao_approval_obtained boolean = true
+        compliance_satisfied boolean = true
+    STATE_END
+
+    # Local object for exclusion tracking
+    OBJECT exclusion_tracker
+        exclusion_list_path `Users >> Exclude`
+        documentation_required `AO Authorization`
+
+        parameters record_data
+            ExclusionCount `0 or documented`
+            AOApproval `Required for any exclusions`
+            DocumentationStatus `Complete`
+        parameters_end
+
+        select string
+            ExcludedUser `User Identity`
+            ExclusionReason `Business Justification`
+            AOSignature `Authorizing Official`
+            ApprovalDate `Authorization Date`
+        select_end
+    OBJECT_END
+CTN_END
+
+CRI_END
+
+# Nested criteria for comprehensive finding determination
+CRI OR
+
+CTN finding_determination
+    TEST any all
+
+    # Combined finding state
+    STATE compliance_finding
+        policy_not_on boolean != true
+        users_not_included boolean != true
+        exclusions_not_documented boolean != true
+        finding_exists boolean = false
+    STATE_END
+
+    # Finding object
+    OBJECT compliance_finding_object
+        finding_criteria `MFA policy not On OR All users not included OR exclusions not documented`
+        finding_severity `high`
+        remediation_required true
+
+        parameters string
+            FindingType `MFA Configuration Non-Compliance`
+            RequiredActions `Enable policy, include all users, document exclusions`
+            ComplianceStandard `Security Controls Framework`
+        parameters_end
+    OBJECT_END
+CTN_END
+
+CRI_END
+
+DEF_END
+
 ```
 
 ### Supported Operations
