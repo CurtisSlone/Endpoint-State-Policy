@@ -102,7 +102,7 @@ impl CtnExecutor for FileMetadataExecutor {
         let test_spec = &criterion.test;
 
         // Phase 1: Existence Check
-        let objects_expected = criterion.objects.len();
+        let objects_expected = criterion.expected_object_count();
         let objects_found = collected_data.len();
 
         let existence_passed =

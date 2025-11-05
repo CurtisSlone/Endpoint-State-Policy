@@ -3,8 +3,8 @@
 //! Validates RPM package installation status and versions.
 
 use esp_scanner_base::strategies::{
-    CollectionMode, CollectionStrategy, CtnContract, ObjectFieldSpec, PerformanceHints,
-    StateFieldSpec,
+    BehaviorParameter, BehaviorType, CollectionMode, CollectionStrategy, CtnContract,
+    ObjectFieldSpec, PerformanceHints, StateFieldSpec, SupportedBehavior,
 };
 use esp_scanner_base::types::common::{DataType, Operation};
 
@@ -94,6 +94,28 @@ pub fn create_rpm_package_contract() -> CtnContract {
             requires_elevated_privileges: false,
         },
     };
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "timeout".to_string(),
+        behavior_type: BehaviorType::Parameter,
+        parameters: vec![BehaviorParameter {
+            name: "timeout".to_string(),
+            data_type: DataType::Int,
+            required: true,
+            default_value: Some("5".to_string()),
+            description: "Command timeout in seconds".to_string(),
+        }],
+        description: "Set command execution timeout".to_string(),
+        example: "BEHAVIOR timeout 30".to_string(),
+    });
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "cache_results".to_string(),
+        behavior_type: BehaviorType::Flag,
+        parameters: vec![],
+        description: "Cache command results for batch operations".to_string(),
+        example: "BEHAVIOR cache_results".to_string(),
+    });
 
     contract
 }

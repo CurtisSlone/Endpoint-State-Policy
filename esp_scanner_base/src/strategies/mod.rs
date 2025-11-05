@@ -33,14 +33,16 @@ pub mod validation;
 
 // Re-export core types for public API
 pub use ctn_contract::{
-    CollectionMappings, CollectionMode, CollectionStrategy, ComputedField, CtnContract,
-    CtnFieldMappings, CtnMetadata, FieldComputation, ObjectFieldSpec, ObjectRequirements,
-    PerformanceHints, StateFieldSpec, StateRequirements, ValidationMappings,
+    BehaviorParameter, BehaviorType, CollectionMappings, CollectionMode, CollectionStrategy,
+    ComputedField, CtnContract, CtnFieldMappings, CtnMetadata, FieldComputation, ObjectFieldSpec,
+    ObjectRequirements, PerformanceHints, StateFieldSpec, StateRequirements, SupportedBehavior,
+    ValidationMappings,
 };
 
 pub use errors::{
-    CollectionError, CtnContractError, CtnExecutionError, StrategyError, ValidationError,
-    ValidationErrorType, ValidationReport, ValidationWarning, ValidationWarningType,
+    BehaviorValidationError, CollectionError, CtnContractError, CtnExecutionError, StrategyError,
+    ValidationError, ValidationErrorType, ValidationReport, ValidationWarning,
+    ValidationWarningType,
 };
 
 pub use registry::{

@@ -283,6 +283,13 @@ impl CtnDataCollector for CommandCollector {
         contract: &CtnContract,
         hints: &BehaviorHints,
     ) -> Result<CollectedData, CollectionError> {
+        contract.validate_behavior_hints(hints).map_err(|e| {
+            CollectionError::CtnContractValidation {
+                reason: e.to_string(),
+            }
+        })?;
+
+        // Then existing code...
         match contract.ctn_type.as_str() {
             "rpm_package" => self.collect_rpm_package(object, hints),
             "systemd_service" => self.collect_systemd_service(object, hints),

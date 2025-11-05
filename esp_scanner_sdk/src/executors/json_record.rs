@@ -33,7 +33,7 @@ impl CtnExecutor for JsonRecordExecutor {
         let test_spec = &criterion.test;
 
         // Phase 1: Existence check
-        let objects_expected = criterion.objects.len();
+        let objects_expected = criterion.expected_object_count();
         let objects_found = collected_data.len();
 
         let existence_passed =

@@ -4,6 +4,7 @@
 use crate::execution::behavior::extract_behavior_hints;
 use crate::execution::comparisons::{string, ComparisonExt};
 use crate::execution::deferred_ops;
+use crate::execution::filter_evaluation::FilterEvaluator;
 use crate::results::{
     ComplianceFinding, EspMetadata, FindingSeverity, HostContext, ResultGenerationError,
     ScanResult, UserContext,
@@ -18,10 +19,10 @@ use crate::types::execution_context::{
     ExecutableCriteriaTree, ExecutableCriterion, ExecutableObject, ExecutionContext,
 };
 use esp_compiler::grammar::ast::nodes::FilterAction;
-use esp_compiler::log_debug;
+use esp_compiler::{log_debug, log_info};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
 /// Main execution engine that orchestrates compliance scanning
 pub struct ExecutionEngine {
     context: ExecutionContext,
@@ -110,25 +111,23 @@ impl ExecutionEngine {
     ) -> Result<TreeResult, ExecutionError> {
         match tree {
             ExecutableCriteriaTree::Criterion(criterion) => {
-                let start = Instant::now();
+                // Clone the criterion so we can mutate it
+                let mut mutable_criterion = criterion.clone();
 
-                // Execute CTN - returns CtnExecutionResult
-                let ctn_execution_result = self.execute_single_criterion(criterion)?;
-
-                // Wrap in CtnResult for tree tracking
-                let ctn_result = CtnResult {
-                    ctn_node_id: criterion.ctn_node_id,
-                    criterion_type: criterion.criterion_type.clone(),
-                    status: ctn_execution_result.status,
-                    execution_result: ctn_execution_result,
-                    execution_time_ms: start.elapsed().as_millis() as u64,
-                };
+                // Execute with mutable reference
+                let result = self.execute_single_criterion(&mut mutable_criterion)?;
 
                 Ok(TreeResult {
-                    status: ctn_result.status,
+                    status: result.status,
                     logical_op: None,
                     negated: false,
-                    ctn_results: vec![ctn_result],
+                    ctn_results: vec![CtnResult {
+                        ctn_node_id: criterion.ctn_node_id,
+                        criterion_type: criterion.criterion_type.clone(),
+                        status: result.status,
+                        execution_result: result,
+                        execution_time_ms: 0,
+                    }],
                     child_results: vec![],
                 })
             }
@@ -137,25 +136,20 @@ impl ExecutionEngine {
                 negate,
                 children,
             } => {
-                // Recursive case: process children
                 let mut child_results = Vec::new();
-
                 for child in children {
-                    let child_tree_result = self.execute_tree(child)?;
-                    child_results.push(child_tree_result);
+                    let child_result = self.execute_tree(child)?;
+                    child_results.push(child_result);
                 }
 
-                // Apply logical operator to child statuses
                 let combined = self.apply_logical_op(&child_results, *logical_op);
-
-                // Apply negation if present
                 let final_status = if *negate { combined.negate() } else { combined };
 
                 Ok(TreeResult {
                     status: final_status,
                     logical_op: Some(*logical_op),
                     negated: *negate,
-                    ctn_results: vec![], // Empty at block level - no flattening
+                    ctn_results: vec![],
                     child_results,
                 })
             }
@@ -193,10 +187,9 @@ impl ExecutionEngine {
     }
 
     /// Execute a single criterion with timeout protection
-    /// Execute a single criterion with timeout protection
     fn execute_single_criterion(
         &mut self,
-        criterion: &ExecutableCriterion,
+        criterion: &mut ExecutableCriterion,
     ) -> Result<CtnExecutionResult, ExecutionError> {
         use std::time::Instant;
 
@@ -217,7 +210,6 @@ impl ExecutionEngine {
                 reason: e.to_string(),
             })?;
 
-        // Clone contract Arc to avoid borrow conflicts
         let contract_clone = Arc::clone(&contract);
 
         // Get collector for this CTN type
@@ -277,10 +269,34 @@ impl ExecutionEngine {
             }
         }
 
-        // Apply filters if any
-        collected_data = self.apply_object_filters(collected_data, criterion, &contract)?;
+        log_debug!("Data collection complete",
+            "ctn_type" => &criterion.criterion_type,
+            "objects_collected" => collected_data.len()
+        );
 
-        // Check timeout after collection
+        // ========================================================================
+        // UPDATED: Apply SET-level filters FIRST - pass mutable criterion
+        // ========================================================================
+        collected_data = self.apply_set_filters(collected_data, criterion)?; // ✅ Changed
+
+        log_debug!("After SET filters",
+            "ctn_type" => &criterion.criterion_type,
+            "objects_remaining" => collected_data.len(),
+            "expected_count" => criterion.expected_object_count()  // ✅ NEW
+        );
+
+        // ========================================================================
+        // UPDATED: Apply object-level filters - pass mutable criterion
+        // ========================================================================
+        collected_data = self.apply_object_filters(collected_data, criterion, &contract)?; // ✅ Changed
+
+        log_debug!("After object filters",
+            "ctn_type" => &criterion.criterion_type,
+            "objects_remaining" => collected_data.len(),
+            "expected_count" => criterion.expected_object_count()  // ✅ NEW
+        );
+
+        // Check timeout after collection and filtering
         if start.elapsed().as_secs() > CTN_TIMEOUT_SECS {
             return Err(ExecutionError::ExecutorFailed {
                 ctn_type: criterion.criterion_type.clone(),
@@ -291,10 +307,7 @@ impl ExecutionEngine {
             });
         }
 
-        // Execute deferred operations if any
-        self.execute_deferred_operations_for_criterion(criterion, &collected_data)?;
-
-        // Get executor AFTER mutable borrow completes
+        // Get executor for this CTN type
         let executor = self
             .registry
             .get_executor_for_ctn(&criterion.criterion_type)
@@ -303,30 +316,22 @@ impl ExecutionEngine {
                 reason: e.to_string(),
             })?;
 
-        // Execute validation using the cloned contract
-        let result = executor.execute_with_contract(criterion, &collected_data, &contract_clone)?;
-
-        // Check timeout after execution
-        let elapsed = start.elapsed();
-        if elapsed.as_secs() > CTN_TIMEOUT_SECS {
-            return Err(ExecutionError::ExecutorFailed {
+        // Execute validation
+        let result = executor
+            .execute_with_contract(criterion, &collected_data, &contract_clone) // ✅ Note: criterion still &
+            .map_err(|e| ExecutionError::ExecutorFailed {
                 ctn_type: criterion.criterion_type.clone(),
-                reason: format!(
-                    "CTN execution exceeded timeout of {}s during validation",
-                    CTN_TIMEOUT_SECS
-                ),
-            });
-        }
+                reason: format!("Executor failed: {}", e),
+            })?;
 
         log_debug!("CTN execution completed",
             "ctn_type" => &criterion.criterion_type,
             "status" => format!("{:?}", result.status),
-            "duration_ms" => elapsed.as_millis()
+            "execution_time_ms" => start.elapsed().as_millis()
         );
 
         Ok(result)
     }
-
     /// Convert CTN execution result to compliance finding
     fn ctn_result_to_finding(
         &self,
@@ -449,35 +454,71 @@ impl ExecutionEngine {
     fn apply_object_filters(
         &self,
         mut collected: HashMap<String, CollectedData>,
-        criterion: &ExecutableCriterion,
-        contract: &Arc<CtnContract>,
+        criterion: &mut ExecutableCriterion, // NEW: Make mutable
+        contract: &CtnContract,
     ) -> Result<HashMap<String, CollectedData>, ExecutionError> {
-        for object in &criterion.objects {
+        let mut to_remove = Vec::new();
+
+        for (object_id, data) in &collected {
+            let object = criterion
+                .objects
+                .iter()
+                .find(|o| o.identifier == *object_id)
+                .ok_or_else(|| ExecutionError::ObjectNotFoundInCriterion {
+                    object_id: object_id.clone(),
+                })?;
+
             let filters = object.get_filters();
-            eprintln!(
-                "🔍 Object '{}' has {} filters",
-                object.identifier,
-                filters.len()
-            );
-            if filters.is_empty() {
-                continue;
+
+            if !filters.is_empty() {
+                log_debug!(
+                    "Object has filters",
+                    "object_id" => object_id,
+                    "filter_count" => filters.len()
+                );
             }
 
             for filter in filters {
-                if let Some(data) = collected.get(&object.identifier) {
-                    let should_keep =
-                        self.evaluate_filter_against_global_states(filter, data, contract)?;
+                let passes = self.evaluate_filter_against_global_states(filter, data, contract)?;
 
-                    let should_remove = match filter.action {
-                        FilterAction::Include => !should_keep,
-                        FilterAction::Exclude => should_keep,
-                    };
+                let should_remove = match filter.action {
+                    FilterAction::Include => !passes,
+                    FilterAction::Exclude => passes,
+                };
 
-                    if should_remove {
-                        collected.remove(&object.identifier);
-                    }
+                if should_remove {
+                    to_remove.push(object_id.clone());
+                    break;
                 }
             }
+        }
+
+        // Remove filtered-out objects
+        for object_id in &to_remove {
+            collected.remove(object_id);
+        }
+
+        // NEW: Update active objects if any were filtered
+        if !to_remove.is_empty() {
+            let active_ids: HashSet<String> = collected.keys().cloned().collect();
+
+            // Merge with existing active_object_ids if SET filters already applied
+            match &criterion.active_object_ids {
+                Some(existing) => {
+                    // Intersection: only keep objects that passed both filters
+                    let merged: HashSet<String> =
+                        active_ids.intersection(existing).cloned().collect();
+                    criterion.set_active_objects(merged);
+                }
+                None => {
+                    criterion.set_active_objects(active_ids);
+                }
+            }
+
+            log_debug!(
+                "Updated active objects after object filters",
+                "active_count" => criterion.expected_object_count()
+            );
         }
 
         Ok(collected)
@@ -637,7 +678,8 @@ impl ExecutionEngine {
     }
 
     /// Execute deferred operations for this criterion ONLY
-    /// FIXED: Only executes operations relevant to this CTN's collected objects
+    /// Only executes operations relevant to this CTN's collected objects
+    #[allow(dead_code)]
     fn execute_deferred_operations_for_criterion(
         &mut self,
         _criterion: &ExecutableCriterion,
@@ -699,6 +741,100 @@ impl ExecutionEngine {
         }
 
         Ok(findings)
+    }
+
+    /// Apply SET-level filters to collected data
+    ///
+    /// Removes objects from the collection that don't pass their SET's filter.
+    /// Called AFTER collection but BEFORE object-level filters.
+    ///
+    /// # Arguments
+    /// * `collected` - HashMap of collected data by object ID
+    /// * `criterion` - Executable criterion with SET filter information
+    ///
+    /// # Returns
+    /// * Filtered HashMap with only objects that pass SET filters
+    fn apply_set_filters(
+        &self,
+        mut collected: HashMap<String, CollectedData>,
+        criterion: &mut ExecutableCriterion,
+    ) -> Result<HashMap<String, CollectedData>, ExecutionError> {
+        // Early return if no SET filters
+        if criterion.set_filters.is_empty() {
+            return Ok(collected);
+        }
+
+        log_debug!(
+            "Applying SET filters",
+            "criterion_type" => &criterion.criterion_type,
+            "set_filter_count" => criterion.set_filters.len(),
+            "collected_count" => collected.len()
+        );
+
+        let mut to_remove = Vec::new();
+
+        // Evaluate SET filter for each object that has one
+        for (object_id, (set_id, filter)) in &criterion.set_filters {
+            if let Some(data) = collected.get(object_id) {
+                log_debug!(
+                    "Evaluating SET filter",
+                    "object_id" => object_id,
+                    "set_id" => set_id,
+                    "filter_action" => format!("{:?}", filter.action),
+                    "state_ref_count" => filter.state_refs.len()
+                );
+
+                let passes = FilterEvaluator::evaluate_filter(filter, data, &self.context)
+                    .map_err(|e| ExecutionError::FilterEvaluationFailed {
+                        object_id: object_id.clone(),
+                        reason: e.to_string(),
+                    })?;
+
+                let should_remove = match filter.action {
+                    FilterAction::Include => !passes,
+                    FilterAction::Exclude => passes,
+                };
+
+                if should_remove {
+                    log_info!(
+                        "SET filter excludes object",
+                        "object_id" => object_id,
+                        "set_id" => set_id,
+                        "filter_action" => match filter.action {
+                            FilterAction::Include => "include",
+                            FilterAction::Exclude => "exclude",
+                        },
+                        "states_satisfied" => passes
+                    );
+                    to_remove.push(object_id.clone());
+                }
+            }
+        }
+
+        // Remove filtered-out objects
+        for object_id in &to_remove {
+            collected.remove(object_id);
+        }
+
+        // NEW: Update active objects tracking
+        if !criterion.set_filters.is_empty() {
+            let active_ids: HashSet<String> = collected.keys().cloned().collect();
+            criterion.set_active_objects(active_ids);
+
+            log_debug!(
+                "Updated active objects after SET filters",
+                "active_count" => criterion.expected_object_count()
+            );
+        }
+
+        log_info!(
+            "SET filter application complete",
+            "original_count" => collected.len() + to_remove.len(),
+            "filtered_out_count" => to_remove.len(),
+            "remaining_count" => collected.len()
+        );
+
+        Ok(collected)
     }
 }
 // ============================================================================
@@ -787,6 +923,12 @@ pub enum ExecutionError {
 
     #[error("Result generation failed: {0}")]
     ResultGenerationError(#[from] ResultGenerationError),
+
+    #[error("Filter evaluation failed for object '{object_id}': {reason}")]
+    FilterEvaluationFailed { object_id: String, reason: String },
+
+    #[error("Object '{object_id}' not found in criterion object list")]
+    ObjectNotFoundInCriterion { object_id: String },
 }
 
 impl From<CtnExecutionError> for ExecutionError {

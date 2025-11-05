@@ -80,6 +80,12 @@ pub enum CtnContractError {
         validation_field: String,
         expected_field: String,
     },
+    #[error("Behavior '{behavior}' not supported by CTN type '{ctn_type}'. Supported behaviors: {supported_behaviors:?}")]
+    UnsupportedBehavior {
+        ctn_type: String,
+        behavior: String,
+        supported_behaviors: Vec<String>,
+    },
 }
 
 /// Strategy registry and management errors
@@ -247,6 +253,13 @@ pub struct ValidationWarning {
     pub warning_type: ValidationWarningType,
     pub message: String,
     pub suggestion: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BehaviorValidationError {
+    pub behavior_name: String,
+    pub reason: String,
+    pub supported_behaviors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

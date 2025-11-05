@@ -56,7 +56,7 @@ impl CtnExecutor for SelinuxStatusExecutor {
         let test_spec = &criterion.test;
 
         // For system-wide checks, we expect exactly 1 object
-        let objects_expected = criterion.objects.len().max(1);
+        let objects_expected = criterion.expected_object_count().max(1);
         let objects_found = collected_data.len().max(1);
 
         let existence_passed =

@@ -20,6 +20,7 @@ pub struct CtnContract {
     pub field_mappings: CtnFieldMappings,
     pub collection_strategy: CollectionStrategy,
     pub metadata: CtnMetadata,
+    pub supported_behaviors: Vec<SupportedBehavior>,
 }
 
 /// Metadata about the CTN contract
@@ -31,6 +32,32 @@ pub struct CtnMetadata {
     pub compliance_frameworks: Vec<String>,
     pub platform_compatibility: Vec<String>,
     pub performance_notes: Option<String>,
+}
+/// Behavior supported by a CTN type
+#[derive(Debug, Clone)]
+pub struct SupportedBehavior {
+    pub name: String,
+    pub behavior_type: BehaviorType,
+    pub parameters: Vec<BehaviorParameter>,
+    pub description: String,
+    pub example: String,
+}
+
+/// Type of behavior
+#[derive(Debug, Clone, PartialEq)]
+pub enum BehaviorType {
+    Flag,      // Simple flag: recursive_scan, include_hidden
+    Parameter, // Takes value: max_depth, timeout
+}
+
+/// Parameter specification for a behavior
+#[derive(Debug, Clone)]
+pub struct BehaviorParameter {
+    pub name: String,
+    pub data_type: DataType,
+    pub required: bool,
+    pub default_value: Option<String>,
+    pub description: String,
 }
 
 /// Object field requirements for a CTN type
@@ -162,6 +189,7 @@ impl CtnContract {
             field_mappings: CtnFieldMappings::new(),
             collection_strategy: CollectionStrategy::default(),
             metadata: CtnMetadata::default(),
+            supported_behaviors: Vec::new(),
         }
     }
 
@@ -441,6 +469,63 @@ impl CtnContract {
                 );
             }
         }
+    }
+
+    /// Add a supported behavior to this contract
+    pub fn add_supported_behavior(&mut self, behavior: SupportedBehavior) {
+        self.supported_behaviors.push(behavior);
+    }
+
+    /// Validate that behavior hints are supported by this contract
+    pub fn validate_behavior_hints(
+        &self,
+        hints: &crate::execution::BehaviorHints,
+    ) -> Result<(), CtnContractError> {
+        // Validate flags
+        for flag in &hints.flags {
+            if !self.is_behavior_supported(flag) {
+                return Err(CtnContractError::UnsupportedBehavior {
+                    ctn_type: self.ctn_type.clone(),
+                    behavior: flag.clone(),
+                    supported_behaviors: self.get_supported_behavior_names(),
+                });
+            }
+        }
+
+        // Validate parameters - check if they belong to a declared behavior
+        for (param_name, _param_value) in &hints.parameters {
+            if !self.is_parameter_of_supported_behavior(param_name) {
+                return Err(CtnContractError::UnsupportedBehavior {
+                    ctn_type: self.ctn_type.clone(),
+                    behavior: param_name.clone(),
+                    supported_behaviors: self.get_supported_behavior_names(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if parameter name belongs to any supported behavior
+    fn is_parameter_of_supported_behavior(&self, param_name: &str) -> bool {
+        self.supported_behaviors
+            .iter()
+            .any(|behavior| behavior.parameters.iter().any(|p| p.name == param_name))
+    }
+
+    /// Check if a behavior is supported
+    fn is_behavior_supported(&self, behavior_name: &str) -> bool {
+        self.supported_behaviors
+            .iter()
+            .any(|b| b.name == behavior_name)
+    }
+
+    /// Get list of supported behavior names
+    fn get_supported_behavior_names(&self) -> Vec<String> {
+        self.supported_behaviors
+            .iter()
+            .map(|b| b.name.clone())
+            .collect()
     }
 }
 

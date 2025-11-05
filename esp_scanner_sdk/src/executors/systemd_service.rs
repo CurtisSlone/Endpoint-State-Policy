@@ -49,7 +49,7 @@ impl CtnExecutor for SystemdServiceExecutor {
     ) -> Result<CtnExecutionResult, CtnExecutionError> {
         let test_spec = &criterion.test;
 
-        let objects_expected = criterion.objects.len();
+        let objects_expected = criterion.expected_object_count();
         let objects_found = collected_data.len();
 
         let existence_passed =

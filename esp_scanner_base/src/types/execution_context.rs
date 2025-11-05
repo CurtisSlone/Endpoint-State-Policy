@@ -14,7 +14,7 @@ use crate::types::TestSpecification;
 use crate::types::{EntityCheck, ResolvedState};
 use esp_compiler::grammar::ModuleField;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 // ============================================================================
 // NEW: Tree Structure for Execution
 // ============================================================================
@@ -284,16 +284,21 @@ pub struct ExecutableCriterion {
     pub test: TestSpecification,
     pub objects: Vec<ExecutableObject>,
     pub states: Vec<ExecutableState>,
+    #[serde(default)]
+    pub set_filters: HashMap<String, (String, ResolvedFilterSpec)>,
+    pub active_object_ids: Option<HashSet<String>>,
 }
 impl ExecutableCriterion {
-    /// Convert from CriterionDeclaration
+    /// Convert from CriterionDeclaration during execution context creation
     pub fn from_declaration(
         declaration: &CriterionDeclaration,
         ctn_node_id: CtnNodeId,
         context: &ResolutionContext,
     ) -> Result<Self, String> {
-        // Convert objects
+        // Convert objects and track SET filters
         let mut objects = Vec::new();
+        let mut set_filters = HashMap::new();
+
         for obj_ref in &declaration.object_refs {
             let resolved_obj = context
                 .resolved_global_objects
@@ -304,8 +309,36 @@ impl ExecutableCriterion {
                         obj_ref.object_id
                     )
                 })?;
+
+            // Check if this object came from a SET with a filter
+            for (set_id, resolved_set) in &context.resolved_sets {
+                if let Some(filter) = &resolved_set.filter {
+                    // Check if this object is in the SET's operands
+                    let object_in_set = resolved_set.operands.iter().any(|operand| match operand {
+                        crate::types::set::ResolvedSetOperand::ObjectRef(id) => {
+                            id == &obj_ref.object_id
+                        }
+                        crate::types::set::ResolvedSetOperand::InlineObject { identifier } => {
+                            identifier == &obj_ref.object_id
+                        }
+                        crate::types::set::ResolvedSetOperand::FilteredObjectRef {
+                            object_id,
+                            ..
+                        } => object_id == &obj_ref.object_id,
+                        _ => false,
+                    });
+
+                    if object_in_set {
+                        // Store the SET filter for this object
+                        set_filters
+                            .insert(obj_ref.object_id.clone(), (set_id.clone(), filter.clone()));
+                    }
+                }
+            }
+
             objects.push(ExecutableObject::from_resolved_object(resolved_obj));
         }
+
         // Add local object if present
         if declaration.local_object.is_some() {
             if let Some(resolved_local) = context.resolved_local_objects.get(&ctn_node_id) {
@@ -341,7 +374,135 @@ impl ExecutableCriterion {
             test: declaration.test.clone(),
             objects,
             states,
+            set_filters,
+            active_object_ids: None,
         })
+    }
+
+    // ========================================================================
+    // NEW METHODS - Filter support
+    // ========================================================================
+
+    /// Get the expected object count after filtering
+    ///
+    /// This should be used instead of `objects.len()` for existence checks
+    /// to account for objects that were filtered out.
+    ///
+    /// # Returns
+    /// - If filters applied: number of objects that passed filters
+    /// - If no filters: original object count
+    ///
+
+    pub fn expected_object_count(&self) -> usize {
+        match &self.active_object_ids {
+            Some(ids) => ids.len(),
+            None => self.objects.len(),
+        }
+    }
+
+    /// Update the set of active objects after filtering
+    ///
+    /// Called by the execution engine after applying SET and/or object filters.
+    ///
+    /// # Arguments
+    /// * `object_ids` - Set of object IDs that remain after filtering
+    ///
+    pub fn set_active_objects(&mut self, object_ids: HashSet<String>) {
+        self.active_object_ids = Some(object_ids);
+    }
+
+    /// Check if an object is active (not filtered out)
+    ///
+    /// # Arguments
+    /// * `object_id` - Object identifier to check
+    ///
+    /// # Returns
+    /// - `true` if object is active (not filtered) or no filters applied
+    /// - `false` if object was filtered out
+    pub fn is_object_active(&self, object_id: &str) -> bool {
+        match &self.active_object_ids {
+            Some(ids) => ids.contains(object_id),
+            None => true, // No filtering = all active
+        }
+    }
+
+    /// Get list of active object identifiers
+    ///
+    /// # Returns
+    /// - If filters applied: list of object IDs that passed filters
+    /// - If no filters: all object IDs from original list
+    pub fn get_active_object_ids(&self) -> Vec<String> {
+        match &self.active_object_ids {
+            Some(ids) => ids.iter().cloned().collect(),
+            None => self.objects.iter().map(|o| o.identifier.clone()).collect(),
+        }
+    }
+
+    /// Check if any filters have been applied to this criterion
+    pub fn has_active_filters(&self) -> bool {
+        self.active_object_ids.is_some()
+    }
+
+    /// Get count of objects that were filtered out
+    ///
+    /// # Returns
+    /// Number of objects removed by filters (0 if no filters applied)
+    pub fn filtered_out_count(&self) -> usize {
+        match &self.active_object_ids {
+            Some(ids) => self.objects.len().saturating_sub(ids.len()),
+            None => 0,
+        }
+    }
+
+    // ========================================================================
+    // EXISTING METHODS - Validation and introspection
+    // ========================================================================
+
+    /// Validate criterion structure
+    pub fn validate(&self) -> Result<(), String> {
+        if self.ctn_node_id == 0 {
+            return Err("Criterion missing CTN node ID".to_string());
+        }
+        if self.criterion_type.is_empty() {
+            return Err("Criterion missing type".to_string());
+        }
+        if self.objects.is_empty() {
+            return Err(format!(
+                "Criterion '{}' has no objects",
+                self.criterion_type
+            ));
+        }
+        if self.states.is_empty() {
+            return Err(format!("Criterion '{}' has no states", self.criterion_type));
+        }
+        Ok(())
+    }
+
+    /// Get object by identifier
+    pub fn get_object(&self, identifier: &str) -> Option<&ExecutableObject> {
+        self.objects.iter().find(|o| o.identifier == identifier)
+    }
+
+    /// Get state by identifier
+    pub fn get_state(&self, identifier: &str) -> Option<&ExecutableState> {
+        self.states.iter().find(|s| s.identifier == identifier)
+    }
+
+    /// Check if this criterion has SET filters
+    pub fn has_set_filters(&self) -> bool {
+        !self.set_filters.is_empty()
+    }
+
+    /// Get all unique SET IDs referenced by filters
+    pub fn get_set_filter_ids(&self) -> Vec<String> {
+        let mut set_ids: Vec<String> = self
+            .set_filters
+            .values()
+            .map(|(set_id, _)| set_id.clone())
+            .collect();
+        set_ids.sort();
+        set_ids.dedup();
+        set_ids
     }
 }
 // ============================================================================

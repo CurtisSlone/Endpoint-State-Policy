@@ -260,6 +260,13 @@ impl CtnDataCollector for FileSystemCollector {
         contract: &CtnContract,
         hints: &BehaviorHints,
     ) -> Result<CollectedData, CollectionError> {
+        contract.validate_behavior_hints(hints).map_err(|e| {
+            CollectionError::CtnContractValidation {
+                reason: e.to_string(),
+            }
+        })?;
+
+        // Then existing code...
         let path = self.extract_path(object)?;
 
         match contract.collection_strategy.collection_mode {

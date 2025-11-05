@@ -13,12 +13,9 @@ pub enum ComparisonError {
 
     #[error("Invalid binary data: {0}")]
     InvalidBinaryData(String),
-    
+
     #[error("Invalid pattern '{pattern}': {reason}")]
-    InvalidPattern {
-        pattern: String,
-        reason: String,
-    },
+    InvalidPattern { pattern: String, reason: String },
 
     #[error("Unsupported operation '{operation:?}' for type {data_type}")]
     UnsupportedOperation {
@@ -44,7 +41,7 @@ pub mod string {
             // Basic equality
             Operation::Equals => Ok(actual == expected),
             Operation::NotEqual => Ok(actual != expected),
-            
+
             // Case-insensitive comparisons (NEW)
             Operation::CaseInsensitiveEquals => {
                 Ok(actual.to_lowercase() == expected.to_lowercase())
@@ -52,36 +49,34 @@ pub mod string {
             Operation::CaseInsensitiveNotEqual => {
                 Ok(actual.to_lowercase() != expected.to_lowercase())
             }
-            
+
             // Contains operations
             Operation::Contains => Ok(actual.contains(expected)),
             Operation::NotContains => Ok(!actual.contains(expected)),
-            
+
             // Prefix operations
             Operation::StartsWith => Ok(actual.starts_with(expected)),
             Operation::NotStartsWith => Ok(!actual.starts_with(expected)), // NEW
-            
+
             // Suffix operations
             Operation::EndsWith => Ok(actual.ends_with(expected)),
-            Operation::NotEndsWith => Ok(!actual.ends_with(expected)),     // NEW
-            
+            Operation::NotEndsWith => Ok(!actual.ends_with(expected)), // NEW
+
             // Pattern matching with regex (IMPROVED)
-            Operation::PatternMatch | Operation::Matches => {
-                match regex::Regex::new(expected) {
-                    Ok(re) => Ok(re.is_match(actual)),
-                    Err(e) => Err(ComparisonError::InvalidPattern {
-                        pattern: expected.to_string(),
-                        reason: format!("Invalid regex pattern: {}", e),
-                    }),
-                }
-            }
-            
+            Operation::PatternMatch | Operation::Matches => match regex::Regex::new(expected) {
+                Ok(re) => Ok(re.is_match(actual)),
+                Err(e) => Err(ComparisonError::InvalidPattern {
+                    pattern: expected.to_string(),
+                    reason: format!("Invalid regex pattern: {}", e),
+                }),
+            },
+
             // Ordering operations (for string comparison)
             Operation::GreaterThan => Ok(actual > expected),
             Operation::LessThan => Ok(actual < expected),
             Operation::GreaterThanOrEqual => Ok(actual >= expected),
             Operation::LessThanOrEqual => Ok(actual <= expected),
-            
+
             // Unsupported operations for strings
             _ => Err(ComparisonError::UnsupportedOperation {
                 operation,
@@ -329,7 +324,6 @@ pub mod binary {
     }
 }
 
-
 /// Collection (set) comparison operations
 pub mod collection {
     use super::*;
@@ -356,32 +350,20 @@ pub mod collection {
     /// Check if actual is a subset of expected
     /// All elements in actual must be present in expected
     fn is_subset(actual: &[ResolvedValue], expected: &[ResolvedValue]) -> bool {
-        let actual_set: HashSet<String> = actual
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
-        let expected_set: HashSet<String> = expected
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
+        let actual_set: HashSet<String> = actual.iter().map(|v| serialize_value(v)).collect();
+
+        let expected_set: HashSet<String> = expected.iter().map(|v| serialize_value(v)).collect();
+
         actual_set.is_subset(&expected_set)
     }
 
     /// Check if actual is a superset of expected
     /// All elements in expected must be present in actual
     fn is_superset(actual: &[ResolvedValue], expected: &[ResolvedValue]) -> bool {
-        let actual_set: HashSet<String> = actual
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
-        let expected_set: HashSet<String> = expected
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
+        let actual_set: HashSet<String> = actual.iter().map(|v| serialize_value(v)).collect();
+
+        let expected_set: HashSet<String> = expected.iter().map(|v| serialize_value(v)).collect();
+
         actual_set.is_superset(&expected_set)
     }
 
@@ -391,16 +373,10 @@ pub mod collection {
             return false;
         }
 
-        let actual_set: HashSet<String> = actual
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
-        let expected_set: HashSet<String> = expected
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
-        
+        let actual_set: HashSet<String> = actual.iter().map(|v| serialize_value(v)).collect();
+
+        let expected_set: HashSet<String> = expected.iter().map(|v| serialize_value(v)).collect();
+
         actual_set == expected_set
     }
 
@@ -508,10 +484,10 @@ pub mod collection {
 
             // Empty set is subset of any set
             assert!(compare(&empty, &non_empty, Operation::SubsetOf).unwrap());
-            
+
             // Non-empty set is superset of empty set
             assert!(compare(&non_empty, &empty, Operation::SupersetOf).unwrap());
-            
+
             // Empty sets are equal
             assert!(compare(&empty, &empty, Operation::Equals).unwrap());
         }
@@ -755,6 +731,44 @@ impl ComparisonExt for ResolvedValue {
                 string::compare(actual, expected, operation)
             }
 
+            // Integer comparison
+            (ResolvedValue::Integer(expected), ResolvedValue::Integer(actual)) => match operation {
+                Operation::Equals => Ok(actual == expected),
+                Operation::NotEqual => Ok(actual != expected),
+                Operation::GreaterThan => Ok(actual > expected),
+                Operation::LessThan => Ok(actual < expected),
+                Operation::GreaterThanOrEqual => Ok(actual >= expected),
+                Operation::LessThanOrEqual => Ok(actual <= expected),
+                _ => Err(ComparisonError::UnsupportedOperation {
+                    operation,
+                    data_type: "integer".to_string(),
+                }),
+            },
+
+            // Float comparison
+            (ResolvedValue::Float(expected), ResolvedValue::Float(actual)) => match operation {
+                Operation::Equals => Ok((actual - expected).abs() < f64::EPSILON),
+                Operation::NotEqual => Ok((actual - expected).abs() >= f64::EPSILON),
+                Operation::GreaterThan => Ok(actual > expected),
+                Operation::LessThan => Ok(actual < expected),
+                Operation::GreaterThanOrEqual => Ok(actual >= expected),
+                Operation::LessThanOrEqual => Ok(actual <= expected),
+                _ => Err(ComparisonError::UnsupportedOperation {
+                    operation,
+                    data_type: "float".to_string(),
+                }),
+            },
+
+            // Boolean comparison
+            (ResolvedValue::Boolean(expected), ResolvedValue::Boolean(actual)) => match operation {
+                Operation::Equals => Ok(actual == expected),
+                Operation::NotEqual => Ok(actual != expected),
+                _ => Err(ComparisonError::UnsupportedOperation {
+                    operation,
+                    data_type: "boolean".to_string(),
+                }),
+            },
+
             // Binary comparison
             (ResolvedValue::Binary(expected), ResolvedValue::Binary(actual)) => {
                 binary::compare(expected, actual, operation)
@@ -765,7 +779,7 @@ impl ComparisonExt for ResolvedValue {
                 evr::compare(right, left, operation)
             }
 
-            // Collection comparison (NEW)
+            // Collection comparison
             (ResolvedValue::Collection(left), ResolvedValue::Collection(right)) => {
                 collection::compare(left, right, operation)
             }
@@ -804,4 +818,3 @@ mod integration_tests {
         assert!(val2.compare_with(&val1, Operation::GreaterThan).unwrap());
     }
 }
-

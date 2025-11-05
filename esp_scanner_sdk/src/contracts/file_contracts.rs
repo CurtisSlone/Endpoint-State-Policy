@@ -3,8 +3,8 @@
 //! Contracts for file metadata and content validation.
 
 use esp_scanner_base::strategies::{
-    CollectionMode, CollectionStrategy, CtnContract, ObjectFieldSpec, PerformanceHints,
-    StateFieldSpec,
+    BehaviorParameter, BehaviorType, CollectionMode, CollectionStrategy, CtnContract,
+    ObjectFieldSpec, PerformanceHints, StateFieldSpec, SupportedBehavior,
 };
 use esp_scanner_base::types::common::{DataType, Operation};
 
@@ -254,6 +254,44 @@ pub fn create_file_content_contract() -> CtnContract {
             requires_elevated_privileges: false,
         },
     };
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "recursive_scan".to_string(),
+        behavior_type: BehaviorType::Flag,
+        parameters: vec![BehaviorParameter {
+            name: "max_depth".to_string(),
+            data_type: DataType::Int,
+            required: false,
+            default_value: Some("3".to_string()),
+            description: "Maximum directory depth for recursive scan".to_string(),
+        }],
+        description: "Recursively scan directories for matching files".to_string(),
+        example: "BEHAVIOR recursive_scan max_depth 5".to_string(),
+    });
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "include_hidden".to_string(),
+        behavior_type: BehaviorType::Flag,
+        parameters: vec![],
+        description: "Include hidden files (starting with .) in scan".to_string(),
+        example: "BEHAVIOR include_hidden".to_string(),
+    });
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "binary_mode".to_string(),
+        behavior_type: BehaviorType::Flag,
+        parameters: vec![],
+        description: "Collect binary files as base64-encoded data".to_string(),
+        example: "BEHAVIOR binary_mode".to_string(),
+    });
+
+    contract.add_supported_behavior(SupportedBehavior {
+        name: "follow_symlinks".to_string(),
+        behavior_type: BehaviorType::Flag,
+        parameters: vec![],
+        description: "Follow symbolic links during collection".to_string(),
+        example: "BEHAVIOR follow_symlinks".to_string(),
+    });
 
     contract
 }

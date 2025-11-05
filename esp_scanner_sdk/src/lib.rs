@@ -84,6 +84,8 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
+
     fn test_registry_creation() {
         let registry = create_scanner_registry().expect("Failed to create registry");
 

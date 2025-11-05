@@ -3,10 +3,12 @@ pub mod comparisons;
 pub mod deferred_ops;
 pub mod engine;
 pub mod entity_check;
+pub mod filter_evaluation;
 pub mod helpers;
 pub mod module_version;
 pub mod record_validation;
 pub mod structured_params;
+pub use filter_evaluation::FilterEvaluator;
 // REMOVED: ComplianceStatus export (use from strategies module instead)
 // Export only engine-specific types
 pub use engine::{CtnResult, ExecutionEngine, ExecutionError};

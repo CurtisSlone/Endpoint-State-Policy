@@ -1,13 +1,13 @@
 {
-  "scan_id": "scan_1762281674",
+  "scan_id": "scan_1762300896",
   "metadata": {
     "META": {
-      "esp_scan_id": "passwd-content-test",
+      "esp_scan_id": "behavior_testing",
       "control_framework": "CIS",
-      "control": "6.2.1",
+      "control": "5.2.1-5.2.6",
       "platform": "linux",
       "criticality": "high",
-      "tags": "linux,users,security"
+      "tags": "linux,ssh,security"
     },
     "host": {
       "hostname": "ccfbcd82356d",
@@ -18,18 +18,18 @@
     "user_context": {
       "username": "unknown",
       "privilege_level": "user",
-      "process_info": "pid:40215"
+      "process_info": "pid:40986"
     },
     "timestamp": {
-      "scan_start": "2025-11-04T18:41:14.779147760Z",
-      "scan_end": "2025-11-04T18:41:14.779149083Z",
+      "scan_start": "2025-11-05T00:01:36.976452120Z",
+      "scan_end": "2025-11-05T00:01:36.976453527Z",
       "duration_ms": 0
     }
   },
   "results": {
     "check": {
-      "total_criteria": 2,
-      "passed_criteria": 2,
+      "total_criteria": 1,
+      "passed_criteria": 1,
       "failed_criteria": 0,
       "error_criteria": 0,
       "pass_percentage": 100.0,
