@@ -318,7 +318,7 @@ impl RuntimeOperationValidator {
             RuntimeOperationType::Unique => (1, Some(1)),
             RuntimeOperationType::Merge => (2, None),
             RuntimeOperationType::Extract => (1, None),
-            RuntimeOperationType::End => (0, Some(0)),
+            RuntimeOperationType::End => (0, Some(1)),
         }
     }
 

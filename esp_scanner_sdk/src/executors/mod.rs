@@ -9,6 +9,7 @@
 //! - SysctlParameterExecutor: Kernel parameter validation
 //! - SystemdServiceExecutor: Service status validation
 
+pub mod computed_values;
 pub mod file_content;
 pub mod file_metadata;
 pub mod json_record;
@@ -17,6 +18,7 @@ pub mod selinux_status;
 pub mod sysctl_parameter;
 pub mod systemd_service;
 
+pub use computed_values::ComputedValuesExecutor;
 pub use file_content::FileContentExecutor;
 pub use file_metadata::FileMetadataExecutor;
 pub use json_record::JsonRecordExecutor;

@@ -232,58 +232,6 @@ fn execute_split(
     Ok(())
 }
 
-/// Execute SUBSTRING operation - extract substring from source
-fn execute_substring(
-    operation: &DeferredOperation,
-    context: &mut ExecutionContext,
-) -> Result<(), ExecutionError> {
-    // 1. Get source variable name
-    let source_var_name = get_source_variable_name(operation)?;
-
-    // 2. Extract start position and length (access through .operation field)
-    let (start, length) = extract_substring_params(&operation.operation.parameters)?;
-
-    // 3. Get source variable value
-    let source_value = context
-        .global_variables
-        .get(&source_var_name)
-        .ok_or_else(|| ExecutionError::DeferredOperationFailed {
-            operation: "SUBSTRING".to_string(),
-            reason: format!("Source variable '{}' not found", source_var_name),
-        })?;
-
-    // 4. Extract string value
-    let source_string = match &source_value.value {
-        ResolvedValue::String(s) => s.clone(),
-        _ => {
-            return Err(ExecutionError::DeferredOperationFailed {
-                operation: "SUBSTRING".to_string(),
-                reason: format!(
-                    "Variable '{}' is not a string (type: {:?})",
-                    source_var_name, source_value.data_type
-                ),
-            })
-        }
-    };
-
-    // 5. Perform substring extraction with bounds checking
-    let end = start.saturating_add(length).min(source_string.len());
-    let substring = if start >= source_string.len() {
-        String::new()
-    } else {
-        source_string[start..end].to_string()
-    };
-
-    // 6. Update target variable
-    update_target_variable(
-        context,
-        &operation.target_variable,
-        ResolvedValue::String(substring),
-    )?;
-
-    Ok(())
-}
-
 /// Execute REGEX_CAPTURE operation - extract matched groups
 fn execute_regex_capture(
     operation: &DeferredOperation,
@@ -485,29 +433,17 @@ fn extract_delimiter_from_parameters(
 }
 
 /// Helper: Extract substring parameters (start, length)
-fn extract_substring_params(parameters: &[RunParameter]) -> Result<(usize, usize), ExecutionError> {
-    let mut start: Option<usize> = None;
-    let mut length: Option<usize> = None;
+fn extract_substring_params(parameters: &[RunParameter]) -> Result<(i64, i64), ExecutionError> {
+    let mut start: Option<i64> = None;
+    let mut length: Option<i64> = None;
 
     for param in parameters {
         match param {
-            // FIXED: Convert i64 to usize with try_into()
             RunParameter::StartPosition(pos) => {
-                start = Some((*pos).try_into().map_err(|_| {
-                    ExecutionError::DeferredOperationFailed {
-                        operation: "SUBSTRING".to_string(),
-                        reason: format!("Invalid start position: {} (must be non-negative)", pos),
-                    }
-                })?)
+                start = Some(*pos);
             }
-            // FIXED: Convert i64 to usize with try_into()
             RunParameter::Length(len) => {
-                length = Some((*len).try_into().map_err(|_| {
-                    ExecutionError::DeferredOperationFailed {
-                        operation: "SUBSTRING".to_string(),
-                        reason: format!("Invalid length: {} (must be non-negative)", len),
-                    }
-                })?)
+                length = Some(*len);
             }
             _ => {}
         }
@@ -520,6 +456,79 @@ fn extract_substring_params(parameters: &[RunParameter]) -> Result<(usize, usize
             reason: "Missing StartPosition or Length parameters".to_string(),
         }),
     }
+}
+
+/// Execute SUBSTRING operation - extract substring from source
+fn execute_substring(
+    operation: &DeferredOperation,
+    context: &mut ExecutionContext,
+) -> Result<(), ExecutionError> {
+    // 1. Get source variable name
+    let source_var_name = get_source_variable_name(operation)?;
+
+    // 2. Extract start position and length (access through .operation field)
+    let (start, length) = extract_substring_params(&operation.operation.parameters)?;
+
+    // 3. Get source variable value
+    let source_value = context
+        .global_variables
+        .get(&source_var_name)
+        .ok_or_else(|| ExecutionError::DeferredOperationFailed {
+            operation: "SUBSTRING".to_string(),
+            reason: format!("Source variable '{}' not found", source_var_name),
+        })?;
+
+    // 4. Extract string value
+    let source_string = match &source_value.value {
+        ResolvedValue::String(s) => s.clone(),
+        _ => {
+            return Err(ExecutionError::DeferredOperationFailed {
+                operation: "SUBSTRING".to_string(),
+                reason: format!(
+                    "Variable '{}' is not a string (type: {:?})",
+                    source_var_name, source_value.data_type
+                ),
+            })
+        }
+    };
+
+    // 5. Perform substring extraction with UTF-8 awareness and negative index support
+    let chars: Vec<char> = source_string.chars().collect();
+    let total_len = chars.len() as i64;
+
+    // Handle negative start (from end of string)
+    let actual_start = if start < 0 {
+        // Negative index: -1 means last char, -2 means second-to-last, etc.
+        (total_len + start).max(0) as usize
+    } else {
+        // Positive index: normal start position
+        start.min(total_len) as usize
+    };
+
+    // Bounds check: if start exceeds length, return empty string
+    let substring = if actual_start >= chars.len() {
+        String::new()
+    } else {
+        // Calculate how many characters we can actually extract
+        let remaining = chars.len() - actual_start;
+        // Take the minimum of requested length and remaining chars
+        let actual_length = length.min(remaining as i64).max(0) as usize;
+        // Extract characters (UTF-8 safe)
+        chars
+            .iter()
+            .skip(actual_start)
+            .take(actual_length)
+            .collect()
+    };
+
+    // 6. Update target variable
+    update_target_variable(
+        context,
+        &operation.target_variable,
+        ResolvedValue::String(substring),
+    )?;
+
+    Ok(())
 }
 
 /// Helper: Extract regex pattern from Pattern parameter

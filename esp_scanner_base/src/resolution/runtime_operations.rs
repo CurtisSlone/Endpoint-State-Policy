@@ -505,21 +505,15 @@ fn execute_count(
             RunParameter::Variable(var_name) => {
                 if let Some(resolved_var) = resolved_variables.get(var_name) {
                     let count = match &resolved_var.value {
+                        ResolvedValue::Collection(items) => items.len() as i64,
                         ResolvedValue::String(s) => s.len() as i64,
                         ResolvedValue::Integer(i) => i.to_string().len() as i64,
                         ResolvedValue::Float(f) => f.to_string().len() as i64,
                         ResolvedValue::Boolean(b) => b.to_string().len() as i64,
                         ResolvedValue::Version(v) => v.len() as i64,
                         ResolvedValue::EvrString(e) => e.len() as i64,
-                        _ => {
-                            return Err(ResolutionError::RuntimeOperationFailed {
-                                operation: operation.target_variable.clone(),
-                                reason: format!(
-                                    "Cannot count elements in variable '{}' of this type",
-                                    var_name
-                                ),
-                            })
-                        }
+                        ResolvedValue::RecordData(_) => 1,
+                        ResolvedValue::Binary(b) => b.len() as i64,
                     };
 
                     return Ok(ResolvedValue::Integer(count));

@@ -1,7 +1,5 @@
-//! # ESP Scanner CLI - FIXED VERSION
+//! # ESP Scanner CLI
 //!
-//! Fixed the criteria tree conversion bug where CRI OR/AND structure was being lost.
-//! The hierarchical CRI/CTN structure is now properly preserved through to ExecutionContext.
 
 use esp_compiler::{log_error, log_info, log_success, logging, pipeline};
 use esp_scanner_base::execution::ExecutionEngine;
@@ -60,24 +58,13 @@ fn print_help(program_name: &str) {
         "    {} --help           Show this help message\n",
         program_name
     );
-    println!("SUPPORTED STRATEGIES:");
-    println!("    file_metadata       Fast file permission/ownership checks");
-    println!("    file_content        File content string validation");
-    println!("    json_record         Structured JSON data validation");
-    println!("    rpm_package         RPM package installation/version checks");
-    println!("    systemd_service     Systemd service status validation");
-    println!("    sysctl_parameter    Kernel parameter validation");
-    println!("    selinux_status      SELinux enforcement mode validation\n");
-    println!("OUTPUT:");
-    println!("    scan_result.json    Single file scan results (SIEM-ready)");
-    println!("    batch_results.json  Directory scan results (SIEM-ready)\n");
+
     println!("EXAMPLES:");
     println!("    {} policy.esp", program_name);
     println!("    {} /etc/esp/policies/", program_name);
 }
 
 /// Convert PipelineResult AST to scanner types
-/// FIXED: Now properly builds CriteriaRoot tree structure instead of flattening
 fn convert_ast_to_scanner_types(
     pipeline_result: &pipeline::PipelineResult,
 ) -> Result<
@@ -87,7 +74,7 @@ fn convert_ast_to_scanner_types(
         Vec<ObjectDeclaration>,
         Vec<RuntimeOperation>,
         Vec<SetOperation>,
-        CriteriaRoot, // CHANGED: Return CriteriaRoot instead of Vec<CriterionDeclaration>
+        CriteriaRoot,
         MetaDataBlock,
     ),
     Box<dyn std::error::Error>,
@@ -181,7 +168,7 @@ fn convert_ast_to_scanner_types(
         })
         .collect();
 
-    // FIXED: Build CriteriaRoot tree structure instead of flattening
+    // Build CriteriaRoot tree structure instead of flattening
     let mut node_id_counter = 1;
     let criteria_root =
         build_criteria_root_from_ast(&ast.definition.criteria, &mut node_id_counter)?;
@@ -197,7 +184,7 @@ fn convert_ast_to_scanner_types(
     ))
 }
 
-/// NEW FUNCTION: Build CriteriaRoot tree structure from compiler AST
+/// Build CriteriaRoot tree structure from compiler AST
 /// This preserves the hierarchical CRI/CTN structure
 fn build_criteria_root_from_ast(
     criteria_nodes: &[esp_compiler::grammar::ast::nodes::CriteriaNode],
@@ -601,13 +588,4 @@ fn discover_esp_files(dir_path: &Path) -> Result<Vec<PathBuf>, Box<dyn std::erro
     }
     esp_files.sort();
     Ok(esp_files)
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_discover_esp_files() {
-        assert!(true);
-    }
 }

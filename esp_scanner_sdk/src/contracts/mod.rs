@@ -6,6 +6,7 @@
 //! - Field mappings: How to map between ESP field names and collected data
 //! - Collection strategy: Performance hints and capabilities
 
+pub mod computed_values;
 pub mod file_contracts;
 pub mod json_contracts;
 pub mod rpm_contracts;
@@ -13,6 +14,7 @@ pub mod selinux_contracts;
 pub mod sysctl_contracts;
 pub mod systemd_contracts;
 
+pub use computed_values::create_computed_values_contract;
 pub use file_contracts::{create_file_content_contract, create_file_metadata_contract};
 pub use json_contracts::create_json_record_contract;
 pub use rpm_contracts::create_rpm_package_contract;

@@ -251,6 +251,144 @@ impl FileSystemCollector {
 
         Ok(data)
     }
+
+    fn collect_recursive(
+        &self,
+        base_path: &str,
+        object_id: &str,
+        max_depth: i64,
+        include_hidden: bool,
+        follow_symlinks: bool,
+    ) -> Result<CollectedData, CollectionError> {
+        use std::path::Path;
+
+        let mut data = CollectedData::new(
+            object_id.to_string(),
+            "file_content".to_string(),
+            self.id.clone(),
+        );
+
+        let base = Path::new(base_path);
+
+        // Check if base path exists
+        if !base.exists() {
+            return Err(CollectionError::ObjectNotFound {
+                object_id: object_id.to_string(),
+            });
+        }
+
+        // Collect files recursively
+        let mut files = Vec::new();
+        self.scan_directory_recursive(
+            base,
+            &mut files,
+            0,
+            max_depth,
+            include_hidden,
+            follow_symlinks,
+        )?;
+
+        // Collect content from all found files
+        let mut all_content = String::new();
+        let mut file_count = 0;
+
+        for file_path in files {
+            match fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    all_content.push_str(&format!("=== {} ===\n", file_path.display()));
+                    all_content.push_str(&content);
+                    all_content.push_str("\n\n");
+                    file_count += 1;
+                }
+                Err(_) => {
+                    // Skip files we can't read (binary, permissions, etc.)
+                    continue;
+                }
+            }
+        }
+
+        data.add_field(
+            "file_content".to_string(),
+            ResolvedValue::String(all_content),
+        );
+        data.add_field("file_count".to_string(), ResolvedValue::Integer(file_count));
+
+        Ok(data)
+    }
+
+    /// Recursively scan directory tree
+    fn scan_directory_recursive(
+        &self,
+        dir: &Path,
+        files: &mut Vec<std::path::PathBuf>,
+        current_depth: i64,
+        max_depth: i64,
+        include_hidden: bool,
+        follow_symlinks: bool,
+    ) -> Result<(), CollectionError> {
+        // Check depth limit
+        if current_depth >= max_depth {
+            return Ok(());
+        }
+
+        // Try to read directory
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => {
+                // Skip directories we can't read
+                return Ok(());
+            }
+        };
+
+        for entry_result in entries {
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(_) => continue, // Skip bad entries
+            };
+
+            let path = entry.path();
+
+            // Get filename for hidden check
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Skip hidden files unless include_hidden is set
+            if !include_hidden && file_name.starts_with('.') {
+                continue;
+            }
+
+            // Get metadata (respecting symlinks setting)
+            let metadata = if follow_symlinks {
+                match fs::metadata(&path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                }
+            } else {
+                match fs::symlink_metadata(&path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                }
+            };
+
+            if metadata.is_file() {
+                files.push(path);
+            } else if metadata.is_dir() {
+                // Recurse into subdirectory
+                let _ = self.scan_directory_recursive(
+                    &path,
+                    files,
+                    current_depth + 1,
+                    max_depth,
+                    include_hidden,
+                    follow_symlinks,
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl CtnDataCollector for FileSystemCollector {
@@ -278,14 +416,21 @@ impl CtnDataCollector for FileSystemCollector {
                 }
 
                 if hints.has_flag("recursive_scan") {
-                    let mut data = self.collect_content(&path, &object.identifier)?;
-                    data.add_warning(
-                        "BEHAVIOR recursive_scan requested but not yet implemented".to_string(),
+                    let max_depth = hints.get_parameter_as_int("max_depth").unwrap_or(3);
+                    let include_hidden = hints.has_flag("include_hidden");
+                    let follow_symlinks = hints.has_flag("follow_symlinks");
+
+                    return self.collect_recursive(
+                        &path,
+                        &object.identifier,
+                        max_depth,
+                        include_hidden,
+                        follow_symlinks,
                     );
-                    Ok(data)
-                } else {
-                    self.collect_content(&path, &object.identifier)
                 }
+
+                // ADD THIS LINE - default content collection:
+                self.collect_content(&path, &object.identifier)
             }
             _ => Err(CollectionError::UnsupportedCollectionMode {
                 collector_id: self.id.clone(),
