@@ -1,0 +1,158 @@
+{
+  "scan_id": "scan_1762403352",
+  "metadata": {
+    "META": {
+      "esp_scan_id": "set-ops-object-ref",
+      "control_framework": "TEST",
+      "control": "SET-OPS-FINAL",
+      "platform": "linux",
+      "criticality": "high",
+      "tags": "linux,set-operations,validation,corrected"
+    },
+    "host": {
+      "hostname": "ccfbcd82356d",
+      "os_info": "linux x86_64",
+      "ip_address": null,
+      "asset_id": null
+    },
+    "user_context": {
+      "username": "unknown",
+      "privilege_level": "user",
+      "process_info": "pid:1573"
+    },
+    "timestamp": {
+      "scan_start": "2025-11-06T04:29:12.888705966Z",
+      "scan_end": "2025-11-06T04:29:12.888706794Z",
+      "duration_ms": 0
+    }
+  },
+  "results": {
+    "check": {
+      "total_criteria": 11,
+      "passed_criteria": 3,
+      "failed_criteria": 8,
+      "error_criteria": 0,
+      "pass_percentage": 27.272728,
+      "status": "noncompliant"
+    },
+    "findings": [
+      {
+        "finding_id": "d24fcd74-8dd8-41c1-9fba-f1f217be2aac",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "1367b26f-17dd-4c94-9741-dcb7eba8b6c7",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false\n  - Object 'hosts_allow_file': Field 'readable' failed: expected true Equals true, got false\n  - Object 'hosts_deny_file': Field 'exists' failed: expected true Equals true, got false\n  - Object 'hosts_deny_file': Field 'readable' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)",
+          "readable": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)",
+          "readable": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "d8279f85-940c-4808-bee6-a7945b125e56",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "86648666-4318-4c19-8b2c-844b145c448b",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "268d500f-97b7-4602-bd69-6218e72cbb8e",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "01a4290c-b915-47b9-b51f-c0978252686e",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      },
+      {
+        "finding_id": "86592bbe-7ad6-498f-b269-c9764d97750c",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false\n  - Object 'hosts_allow_file': Field 'readable' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)",
+          "readable": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)",
+          "readable": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CRI_OR > CTN_file_metadata"
+      },
+      {
+        "finding_id": "27193b0c-9d5c-43bf-a463-294d1744d582",
+        "severity": "high",
+        "title": "file_metadata validation failed",
+        "description": "File metadata validation failed:\n  - Object 'hosts_allow_file': Field 'exists' failed: expected true Equals true, got false\n  - Object 'hosts_deny_file': Field 'exists' failed: expected true Equals true, got false",
+        "expected": {
+          "exists": "Boolean(true)"
+        },
+        "actual": {
+          "exists": "Boolean(false)"
+        },
+        "remediation": null,
+        "field_path": "CRI_AND > CTN_file_metadata"
+      }
+    ],
+    "passed": false
+  }
+}
