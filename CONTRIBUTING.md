@@ -82,7 +82,7 @@ Examples:
 - Cloud or platform-specific checks
 - Database or API validation
 
-See: `esp_scanner_sdk/docs/Scanner_Development_Guide.md`
+See: `docs/Scanner_Development_Guide.md`
 
 ---
 
