@@ -1093,11 +1093,11 @@ Copyright (c) 2025 Curtis Slone
 
 ### Documentation
 - [ESP Language Specification](docs/EBNF.md)
-- [Scanner SDK Development Guide](esp_scanner_sdk/docs/ESP_Scanner_SDK_Development_Guide.md)
-- [API Documentation](https://docs.rs/esp_scanner_base) (generated with `make docs`)
+- [Scanner SDK Development Guide](docs/ESP_Scanner_SDK_Development_Guide.md)
+- [API Documentation](esp_scanner_base) (generated with `make docs`)
 
 ### Examples
-- [Example Policies](examples/)
+- [Example Policies](esp_scanner_sdk/esp/)
 - [Test Cases](esp_scanner_sdk/tests/)
 
 ### Community
@@ -1131,5 +1131,6 @@ Security features:
 ---
 
 **ESP - Making endpoint compliance declarative, testable, and automatable.**
+
 
 
