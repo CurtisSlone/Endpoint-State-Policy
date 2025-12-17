@@ -6,18 +6,177 @@
 [![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
 ---
+# Overview
 
-## Overview
+The Endpoint State Policy (ESP) project provides a complete framework for defining and executing declarative, machine-verifiable security controls on endpoints.
 
-The Endpoint State Policy (ESP) project provides a complete framework for defining and validating security compliance policies on endpoints. It consists of three main components:
+ESP is intentionally designed as a replacement for SCAP/XCCDF-style content, while preserving the core idea that matters: expressing security intent as executable policy, not imperative scripts.
 
-1. **ESP Compiler** - Parses and validates `.esp` policy definitions
-2. **ESP Scanner Base** - Core scanning framework and execution engine
-3. **ESP Scanner SDK** - Reference implementation with file system, package, and service scanners
+The repository is organized as a workspace containing three primary components:
 
-### What is ESP?
+- **ESP Compiler** — Parses and validates `.esp` policy definitions into a typed AST
+- **ESP Scanner Base** — A generic execution engine that evaluates policies against collected system state
+- **ESP Scanner SDK** — Reference collectors and executors for common endpoint resources (files, services, packages, sysctl, etc.)
 
-ESP is a declarative policy language that enables security teams to define **what should be true** about their endpoints without writing imperative code. Policies are written in `.esp` files and executed by scanners to produce compliance reports.
+This separation allows ESP to be used in multiple ways:
+
+- As a standalone open-source scanner
+- As a policy execution engine embedded into another platform
+- As a portable policy format executed by multiple scanner implementations
+
+---
+
+## What Is ESP?
+
+ESP is a declarative policy language for endpoint security validation.
+
+Instead of writing scripts that perform checks, ESP allows you to describe:
+
+- What data should be collected
+- What conditions must be true
+- How those conditions are combined
+- When findings should be reported
+
+Policies are written as data, not code. The scanner is responsible for execution.
+
+At a high level, ESP policies are composed of:
+
+- **Objects** — Things to observe (files, services, registry keys, packages, etc.)
+- **States** — Assertions about object properties
+- **Criteria (CTNs / CRIs)** — Logical evaluation of states across objects
+- **Sets & Filters** — Collection and reduction of object groups
+- **Runtime Operations** — Deterministic computation (math, string ops, extraction)
+
+This design makes ESP:
+
+- Deterministic
+- Inspectable
+- Testable
+- Extensible
+
+---
+
+## What Problem ESP Solves
+
+Traditional compliance automation (e.g., SCAP/XCCDF) suffers from:
+
+- Verbose, fragile XML
+- Tight coupling between content and execution
+- Poor extensibility
+- High authoring and maintenance cost
+
+ESP addresses this by:
+
+- Separating policy definition from execution
+- Using a typed, validated DSL
+- Enforcing clear contracts between collectors and executors
+- Making policy authoring readable by humans and machines
+
+ESP focuses exclusively on **technical controls** — controls that can be validated by inspecting endpoint state.
+
+---
+
+## Control Framework Coverage
+
+ESP can express and execute technical controls from any control framework that defines observable system requirements, including:
+
+- NIST SP 800-53
+- NIST SP 800-171
+- MITRE ATT&CK (detection-oriented techniques)
+- DISA STIGs
+- CIS Benchmarks
+- Organization- or program-specific baselines
+
+ESP does not attempt to model governance, policy, or process controls. It is explicitly designed to answer:
+
+> "Is this endpoint in the required technical state?"
+
+---
+
+## Example: Translating a Technical Control into ESP
+
+**Framework:** NIST SP 800-53  
+**Control:** CM-6 – Configuration Settings
+
+> "The organization configures systems to enforce least functionality by restricting unnecessary or insecure configuration settings."
+
+A common Linux implementation of this control includes:
+
+- SSH root login must be disabled
+- SSH configuration file must be owned by root
+- Insecure SSH options must not be present
+
+Below is how that control intent is expressed directly in ESP.
+
+### ESP Representation
+
+```esp
+META
+    control_framework `NIST-800-53`
+    control `CM-6`
+    description `Ensure SSH is securely configured`
+META_END
+
+DEF
+
+# Object: SSH configuration file
+OBJECT ssh_config
+    path `/etc/ssh`
+    filename `sshd_config`
+
+    select record
+        content text
+        owner uid
+    select_end
+OBJECT_END
+
+# States: Required security properties
+STATE no_root_login
+    content string not_contains `PermitRootLogin yes`
+STATE_END
+
+STATE secure_owner
+    owner string = `0`
+STATE_END
+
+# Criteria: All conditions must hold
+CRI AND
+    CTN ssh_hardening
+        TEST all all
+        STATE_REF no_root_login
+        STATE_REF secure_owner
+        OBJECT_REF ssh_config
+    CTN_END
+CRI_END
+
+DEF_END
+```
+
+This policy:
+
+- Collects the SSH configuration file
+- Evaluates its content and ownership
+- Produces a deterministic pass/fail result
+- Can be executed by any ESP-compatible scanner
+
+---
+
+## From Policy to Execution
+
+Once compiled, ESP policies are:
+
+1. Validated for structure, types, and references
+2. Converted into an executable AST
+3. Evaluated by the scanner using registered collectors and executors
+4. Emitted as structured, SIEM-ready compliance results
+
+The rest of this repository shows:
+
+- How the language is defined
+- How execution is orchestrated
+- How to extend the system with new scanners
+
+The example below demonstrates a full ESP policy in context.
 
 **Example ESP Policy:**
 
@@ -972,4 +1131,5 @@ Security features:
 ---
 
 **ESP - Making endpoint compliance declarative, testable, and automatable.**
+
 
