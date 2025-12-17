@@ -230,7 +230,7 @@ cargo build --workspace --release
 
 ```bash
 # Run the scanner CLI
-cargo run --release --bin scanner -- scan examples/sudo_priv_check.esp
+cargo run -- esp/sudo_priv_check.esp
 
 # Or install and use directly
 make install
@@ -972,3 +972,4 @@ Security features:
 ---
 
 **ESP - Making endpoint compliance declarative, testable, and automatable.**
+
