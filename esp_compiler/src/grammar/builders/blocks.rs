@@ -4,11 +4,36 @@
 //! They follow predictable patterns and delegate to atomic/expression builders for choices.
 //!
 //! FIXED: Removed circular dependencies by moving parse_filter_spec to expressions.rs
+//! FIXED: parse_record_check now correctly distinguishes 'field' keyword from data types
 
 use crate::grammar::ast::nodes::*;
 use crate::grammar::builders::{atomic::*, expressions::*, helpers::*};
 use crate::grammar::keywords::Keyword;
 use crate::tokens::Token;
+
+// ============================================================================
+// HELPER: Check if an identifier is a data type
+// ============================================================================
+
+/// Check if an identifier represents a data type
+/// This prevents 'field' from being incorrectly parsed as a data type
+fn is_data_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "string"
+            | "int"
+            | "float"
+            | "boolean"
+            | "binary"
+            | "record_data"
+            | "version"
+            | "evr_string"
+    )
+}
+
+// ============================================================================
+// ESP FILE PARSING
+// ============================================================================
 
 /// Parse esp_file ::= metadata? definition
 pub fn parse_esp_file(parser: &mut dyn Parser) -> Result<EspFile, String> {
@@ -93,6 +118,10 @@ pub fn parse_definition(parser: &mut dyn Parser) -> Result<DefinitionNode, Strin
     })
 }
 
+// ============================================================================
+// METADATA PARSING
+// ============================================================================
+
 /// Parse metadata ::= "META" statement_end metadata_content "META_END" statement_end
 pub fn parse_metadata_block(parser: &mut dyn Parser) -> Result<MetadataBlock, String> {
     parser.expect_keyword(Keyword::Meta)?;
@@ -141,6 +170,10 @@ pub fn parse_metadata_field(parser: &mut dyn Parser) -> Result<MetadataField, St
     })
 }
 
+// ============================================================================
+// VARIABLE PARSING
+// ============================================================================
+
 /// Parse variable_declaration ::= "VAR" space variable_name space data_type (space initial_value)? statement_end
 pub fn parse_variable_declaration(parser: &mut dyn Parser) -> Result<VariableDeclaration, String> {
     parser.expect_keyword(Keyword::Var)?;
@@ -162,6 +195,10 @@ pub fn parse_variable_declaration(parser: &mut dyn Parser) -> Result<VariableDec
         span: Some(parser.current_span()),
     })
 }
+
+// ============================================================================
+// STATE PARSING
+// ============================================================================
 
 /// Parse state_definition ::= "STATE" space state_identifier statement_end state_content "STATE_END" statement_end
 pub fn parse_state_definition(parser: &mut dyn Parser) -> Result<StateDefinition, String> {
@@ -216,13 +253,23 @@ pub fn parse_state_field(parser: &mut dyn Parser) -> Result<StateField, String> 
     })
 }
 
+// ============================================================================
+// RECORD PARSING - FIXED
+// ============================================================================
+
 /// Parse record_check ::= "record" space data_type? statement_end record_content "record_end" statement_end
+///
+/// FIXED: Now correctly distinguishes between:
+/// - Optional data type identifier (string, int, etc.)
+/// - 'field' keyword for nested field operations
+/// - Direct operation symbols (=, contains, etc.)
 pub fn parse_record_check(parser: &mut dyn Parser) -> Result<RecordCheck, String> {
     parser.expect_keyword(Keyword::Record)?;
 
-    // Check for optional data type
+    // FIXED: Check for optional data type - but ONLY if it's actually a data type,
+    // not 'field' or other context-sensitive identifiers
     let data_type = match parser.current_token() {
-        Some(Token::Identifier(_)) => Some(parse_data_type(parser)?),
+        Some(Token::Identifier(name)) if is_data_type_name(name) => Some(parse_data_type(parser)?),
         _ => None,
     };
 
@@ -263,6 +310,10 @@ pub fn parse_record_field(parser: &mut dyn Parser) -> Result<RecordField, String
     })
 }
 
+// ============================================================================
+// OBJECT PARSING
+// ============================================================================
+
 /// Parse object_definition ::= "OBJECT" space object_identifier statement_end object_content "OBJECT_END" statement_end
 pub fn parse_object_definition(parser: &mut dyn Parser) -> Result<ObjectDefinition, String> {
     parser.expect_keyword(Keyword::Object)?;
@@ -291,6 +342,10 @@ pub fn parse_object_definition(parser: &mut dyn Parser) -> Result<ObjectDefiniti
         span: Some(parser.current_span()),
     })
 }
+
+// ============================================================================
+// RUNTIME OPERATION PARSING
+// ============================================================================
 
 /// Parse runtime_operation ::= "RUN" space variable_name space operation_type statement_end run_parameters "RUN_END" statement_end
 pub fn parse_runtime_operation(parser: &mut dyn Parser) -> Result<RuntimeOperation, String> {
@@ -321,6 +376,10 @@ pub fn parse_runtime_operation(parser: &mut dyn Parser) -> Result<RuntimeOperati
         span: Some(parser.current_span()),
     })
 }
+
+// ============================================================================
+// SET OPERATION PARSING
+// ============================================================================
 
 /// Parse set_operation ::= "SET" space set_identifier space set_operation statement_end set_content "SET_END" statement_end
 pub fn parse_set_operation(parser: &mut dyn Parser) -> Result<SetOperation, String> {
@@ -364,6 +423,10 @@ pub fn parse_set_operation(parser: &mut dyn Parser) -> Result<SetOperation, Stri
     })
 }
 
+// ============================================================================
+// CRITERIA PARSING
+// ============================================================================
+
 /// Parse criteria ::= "CRI" space logical_operator space? negate_flag? statement_end criteria_content "CRI_END" statement_end
 pub fn parse_criteria_node(parser: &mut dyn Parser) -> Result<CriteriaNode, String> {
     parser.expect_keyword(Keyword::Cri)?;
@@ -401,6 +464,10 @@ pub fn parse_criteria_node(parser: &mut dyn Parser) -> Result<CriteriaNode, Stri
         span: Some(parser.current_span()),
     })
 }
+
+// ============================================================================
+// CRITERION PARSING
+// ============================================================================
 
 /// Parse criterion ::= "CTN" space criterion_type statement_end ctn_content "CTN_END" statement_end
 pub fn parse_criterion_node(parser: &mut dyn Parser) -> Result<CriterionNode, String> {
@@ -466,6 +533,10 @@ pub fn parse_criterion_node(parser: &mut dyn Parser) -> Result<CriterionNode, St
         span: Some(parser.current_span()),
     })
 }
+
+// ============================================================================
+// TEST SPECIFICATION PARSING
+// ============================================================================
 
 /// Parse test_specification ::= "TEST" space existence_check space item_check (space state_operator)? statement_end
 pub fn parse_test_specification(parser: &mut dyn Parser) -> Result<TestSpecification, String> {

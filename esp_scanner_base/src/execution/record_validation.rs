@@ -7,7 +7,7 @@ use crate::types::common::{DataType, Operation, RecordData, ResolvedValue};
 use crate::types::execution_context::{
     ExecutableRecordCheck, ExecutableRecordContent, ExecutableRecordField,
 };
-use crate::types::field_path_extensions::FieldPathExt;
+use crate::types::field_path_extensions::{FieldPathExt, PathComponent};
 use crate::types::EntityCheck;
 
 /// Result of validating a single record field or check
@@ -91,21 +91,103 @@ fn validate_nested_fields(
     Ok(results)
 }
 
+// ============================================================================
+// WILDCARD PATH EXPANSION
+// ============================================================================
+
+/// Expand a wildcard path against a JSON value, returning all matching values
+///
+/// For example, given path "spec.containers.*.image" and JSON:
+/// ```json
+/// {
+///   "spec": {
+///     "containers": [
+///       {"image": "nginx:1.19"},
+///       {"image": "envoy:1.20"}
+///     ]
+///   }
+/// }
+/// ```
+/// Returns: ["nginx:1.19", "envoy:1.20"]
+fn expand_wildcard_path<'a>(
+    value: &'a serde_json::Value,
+    components: &[PathComponent],
+) -> Vec<&'a serde_json::Value> {
+    if components.is_empty() {
+        return vec![value];
+    }
+
+    let (current, rest) = (&components[0], &components[1..]);
+
+    match current {
+        PathComponent::Field(field_name) => {
+            // Navigate to named field
+            match value.get(field_name) {
+                Some(child) => expand_wildcard_path(child, rest),
+                None => Vec::new(),
+            }
+        }
+        PathComponent::Index(idx) => {
+            // Navigate to array index
+            match value.get(*idx) {
+                Some(child) => expand_wildcard_path(child, rest),
+                None => Vec::new(),
+            }
+        }
+        PathComponent::Wildcard => {
+            // Expand across all array elements or object values
+            let mut results = Vec::new();
+
+            match value {
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        results.extend(expand_wildcard_path(item, rest));
+                    }
+                }
+                serde_json::Value::Object(map) => {
+                    for (_key, child) in map {
+                        results.extend(expand_wildcard_path(child, rest));
+                    }
+                }
+                _ => {
+                    // Wildcard on non-collection - return empty
+                }
+            }
+
+            results
+        }
+    }
+}
+
 /// Validate a field with wildcard path (collection validation)
 fn validate_field_collection(
-    _record_data: &RecordData,
+    record_data: &RecordData,
     field: &ExecutableRecordField,
 ) -> Result<RecordValidationResult, String> {
-    // Resolve wildcard path to get all matching values
-    let json_values: Vec<&serde_json::Value> = Vec::new();
+    // Parse field path into components
+    let components = field.path.parse_components();
+
+    // Expand wildcard path to get all matching values
+    let json_values = expand_wildcard_path(record_data.as_json_value(), &components);
 
     if json_values.is_empty() {
+        // No matches found - behavior depends on entity check
+        let entity_check = field.entity_check.unwrap_or(EntityCheck::All);
+        let passed = match entity_check {
+            EntityCheck::None => true, // "none" passes when no items exist
+            _ => false,                // Other checks fail when no items exist
+        };
+
         return Ok(RecordValidationResult {
             field_path: field.path.to_dot_notation(),
-            passed: false,
-            message: "No values matched wildcard path".to_string(),
+            passed,
+            message: format!(
+                "No values matched wildcard path '{}' (entity check: {})",
+                field.path.to_dot_notation(),
+                entity_check.as_str()
+            ),
             expected: Some(format!("{:?}", field.value)),
-            actual: None,
+            actual: Some("no matching values".to_string()),
         });
     }
 
@@ -114,53 +196,26 @@ fn validate_field_collection(
     let mut actual_values = Vec::new();
 
     for json_value in &json_values {
-        // Convert JSON to ResolvedValue
-        let actual_value = json_to_resolved_value(json_value, field.data_type)
-            .map_err(|e| format!("Type conversion failed: {}", e))?;
+        // Convert JSON to ResolvedValue based on expected type
+        let actual_value = json_to_resolved_value(json_value, field.data_type);
 
-        // Perform comparison using the appropriate comparison function
-        let passed = match (&actual_value, &field.value, field.operation) {
-            // String comparisons
-            (ResolvedValue::String(actual), ResolvedValue::String(expected), op) => {
-                use crate::execution::comparisons::string;
-                string::compare(actual, expected, op).unwrap_or(false)
+        let passed = match actual_value {
+            Ok(ref actual) => {
+                // Use ComparisonExt for consistent comparison logic
+                actual
+                    .compare_with(&field.value, field.operation)
+                    .unwrap_or(false)
             }
-
-            // Integer comparisons
-            (ResolvedValue::Integer(actual), ResolvedValue::Integer(expected), op) => match op {
-                Operation::Equals => actual == expected,
-                Operation::NotEqual => actual != expected,
-                Operation::GreaterThan => actual > expected,
-                Operation::LessThan => actual < expected,
-                Operation::GreaterThanOrEqual => actual >= expected,
-                Operation::LessThanOrEqual => actual <= expected,
-                _ => false,
-            },
-
-            // Float comparisons
-            (ResolvedValue::Float(actual), ResolvedValue::Float(expected), op) => match op {
-                Operation::Equals => (actual - expected).abs() < f64::EPSILON,
-                Operation::NotEqual => (actual - expected).abs() >= f64::EPSILON,
-                Operation::GreaterThan => actual > expected,
-                Operation::LessThan => actual < expected,
-                Operation::GreaterThanOrEqual => actual >= expected,
-                Operation::LessThanOrEqual => actual <= expected,
-                _ => false,
-            },
-
-            // Boolean comparisons
-            (ResolvedValue::Boolean(actual), ResolvedValue::Boolean(expected), op) => match op {
-                Operation::Equals => actual == expected,
-                Operation::NotEqual => actual != expected,
-                _ => false,
-            },
-
-            // Type mismatch or unsupported operation
-            _ => false,
+            Err(_) => {
+                // Type conversion failed - treat as non-match
+                false
+            }
         };
 
         comparison_results.push(passed);
-        actual_values.push(actual_value);
+        if let Ok(val) = actual_value {
+            actual_values.push(val);
+        }
     }
 
     // Apply entity check to aggregate results
@@ -213,36 +268,38 @@ fn validate_field_single(
     record_data: &RecordData,
     field: &ExecutableRecordField,
 ) -> Result<RecordValidationResult, String> {
-    // Extract field value from record using path
-    // FIXED: get_field_by_path returns Option, not Result
-    let json_value = match record_data.get_field_by_path(&field.path.to_dot_notation()) {
-        Some(v) => v,
+    // Parse components to handle both dot notation and numeric indices
+    let components = field.path.parse_components();
+
+    // Use our path expansion (which handles indices) to get single value
+    let json_values = expand_wildcard_path(record_data.as_json_value(), &components);
+
+    let json_value = match json_values.first() {
+        Some(v) => *v,
         None => {
             return Ok(RecordValidationResult {
                 field_path: field.path.to_dot_notation(),
                 passed: false,
-                message: "Field not found".to_string(),
+                message: format!(
+                    "Field '{}' not found in record",
+                    field.path.to_dot_notation()
+                ),
                 expected: Some(format!("{:?}", field.value)),
                 actual: None,
             });
         }
     };
 
-    // Convert JSON value to ResolvedValue
-    let actual_value = match json_to_resolved_value(json_value, field.data_type) {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(RecordValidationResult {
-                field_path: field.path.to_dot_notation(),
-                passed: false,
-                message: format!("Type conversion failed: {}", e),
-                expected: Some(format!("{:?}", field.value)),
-                actual: Some(format!("{:?}", json_value)),
-            });
-        }
-    };
+    // Convert to ResolvedValue
+    let actual_value = json_to_resolved_value(json_value, field.data_type).map_err(|e| {
+        format!(
+            "Type conversion failed for field '{}': {}",
+            field.path.to_dot_notation(),
+            e
+        )
+    })?;
 
-    // Perform comparison
+    // Use ComparisonExt for comparison
     let comparison_passed = actual_value
         .compare_with(&field.value, field.operation)
         .unwrap_or_else(|_e| {
@@ -302,17 +359,29 @@ fn json_to_resolved_value(
     data_type: DataType,
 ) -> Result<ResolvedValue, String> {
     match (json, data_type) {
+        // String conversion - also handle numbers/bools as strings if requested
         (serde_json::Value::String(s), DataType::String) => Ok(ResolvedValue::String(s.clone())),
+        (serde_json::Value::Number(n), DataType::String) => {
+            Ok(ResolvedValue::String(n.to_string()))
+        }
+        (serde_json::Value::Bool(b), DataType::String) => Ok(ResolvedValue::String(b.to_string())),
+
+        // Integer conversion
         (serde_json::Value::Number(n), DataType::Int) => n
             .as_i64()
             .map(ResolvedValue::Integer)
             .ok_or_else(|| "Number is not a valid integer".to_string()),
+
+        // Float conversion
         (serde_json::Value::Number(n), DataType::Float) => n
             .as_f64()
             .map(ResolvedValue::Float)
             .ok_or_else(|| "Number is not a valid float".to_string()),
-        // FIXED: Remove dereference - bools are Copy
+
+        // Boolean conversion
         (serde_json::Value::Bool(b), DataType::Boolean) => Ok(ResolvedValue::Boolean(*b)),
+
+        // Array to Collection
         (serde_json::Value::Array(items), _) => {
             let resolved_items: Result<Vec<_>, _> = items
                 .iter()
@@ -320,9 +389,31 @@ fn json_to_resolved_value(
                 .collect();
             Ok(ResolvedValue::Collection(resolved_items?))
         }
+
+        // Object to RecordData
         (serde_json::Value::Object(_), DataType::RecordData) => Ok(ResolvedValue::RecordData(
             Box::new(RecordData::from_json_value(json.clone())),
         )),
+
+        // Auto-detect type if RecordData is requested but we have a primitive
+        (serde_json::Value::String(s), DataType::RecordData) => {
+            Ok(ResolvedValue::String(s.clone()))
+        }
+        (serde_json::Value::Number(n), DataType::RecordData) => {
+            if let Some(i) = n.as_i64() {
+                Ok(ResolvedValue::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(ResolvedValue::Float(f))
+            } else {
+                Err("Invalid number".to_string())
+            }
+        }
+        (serde_json::Value::Bool(b), DataType::RecordData) => Ok(ResolvedValue::Boolean(*b)),
+
+        // Null handling
+        (serde_json::Value::Null, _) => Err("Cannot convert null to ResolvedValue".to_string()),
+
+        // Type mismatch
         _ => Err(format!(
             "Cannot convert JSON type {:?} to {:?}",
             json, data_type
@@ -361,9 +452,13 @@ fn format_value(value: &ResolvedValue) -> String {
         ResolvedValue::EvrString(e) => format!("evr({})", e),
         ResolvedValue::Binary(b) => format!("binary({} bytes)", b.len()),
         ResolvedValue::RecordData(_) => "<record>".to_string(),
-        ResolvedValue::Collection(items) => format!("[{}]", items.len()),
+        ResolvedValue::Collection(items) => format!("[{} items]", items.len()),
     }
 }
+
+// ============================================================================
+// TESTS
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -395,62 +490,62 @@ mod tests {
 
     #[test]
     fn test_entity_check_application() {
-        assert_eq!(apply_entity_check(true, EntityCheck::All), true);
-        assert_eq!(apply_entity_check(false, EntityCheck::None), true);
-        assert_eq!(apply_entity_check(true, EntityCheck::None), false);
-        assert_eq!(apply_entity_check(true, EntityCheck::AtLeastOne), true);
+        assert!(apply_entity_check(true, EntityCheck::All));
+        assert!(apply_entity_check(false, EntityCheck::None));
+        assert!(!apply_entity_check(true, EntityCheck::None));
+        assert!(apply_entity_check(true, EntityCheck::AtLeastOne));
     }
 
     #[test]
     fn test_entity_check_collection_all() {
-        assert_eq!(
-            apply_entity_check_to_collection(&[true, true, true], EntityCheck::All),
-            true
-        );
-        assert_eq!(
-            apply_entity_check_to_collection(&[true, false, true], EntityCheck::All),
-            false
-        );
+        assert!(apply_entity_check_to_collection(
+            &[true, true, true],
+            EntityCheck::All
+        ));
+        assert!(!apply_entity_check_to_collection(
+            &[true, false, true],
+            EntityCheck::All
+        ));
     }
 
     #[test]
     fn test_entity_check_collection_at_least_one() {
-        assert_eq!(
-            apply_entity_check_to_collection(&[false, false, true], EntityCheck::AtLeastOne),
-            true
-        );
-        assert_eq!(
-            apply_entity_check_to_collection(&[false, false, false], EntityCheck::AtLeastOne),
-            false
-        );
+        assert!(apply_entity_check_to_collection(
+            &[false, false, true],
+            EntityCheck::AtLeastOne
+        ));
+        assert!(!apply_entity_check_to_collection(
+            &[false, false, false],
+            EntityCheck::AtLeastOne
+        ));
     }
 
     #[test]
     fn test_entity_check_collection_none() {
-        assert_eq!(
-            apply_entity_check_to_collection(&[false, false, false], EntityCheck::None),
-            true
-        );
-        assert_eq!(
-            apply_entity_check_to_collection(&[true, false, false], EntityCheck::None),
-            false
-        );
+        assert!(apply_entity_check_to_collection(
+            &[false, false, false],
+            EntityCheck::None
+        ));
+        assert!(!apply_entity_check_to_collection(
+            &[true, false, false],
+            EntityCheck::None
+        ));
     }
 
     #[test]
     fn test_entity_check_collection_only_one() {
-        assert_eq!(
-            apply_entity_check_to_collection(&[false, true, false], EntityCheck::OnlyOne),
-            true
-        );
-        assert_eq!(
-            apply_entity_check_to_collection(&[true, true, false], EntityCheck::OnlyOne),
-            false
-        );
-        assert_eq!(
-            apply_entity_check_to_collection(&[false, false, false], EntityCheck::OnlyOne),
-            false
-        );
+        assert!(apply_entity_check_to_collection(
+            &[false, true, false],
+            EntityCheck::OnlyOne
+        ));
+        assert!(!apply_entity_check_to_collection(
+            &[true, true, false],
+            EntityCheck::OnlyOne
+        ));
+        assert!(!apply_entity_check_to_collection(
+            &[false, false, false],
+            EntityCheck::OnlyOne
+        ));
     }
 
     #[test]
@@ -461,5 +556,144 @@ mod tests {
         );
         assert_eq!(format_value(&ResolvedValue::Integer(42)), "42");
         assert_eq!(format_value(&ResolvedValue::Boolean(true)), "true");
+    }
+
+    // =========================================================================
+    // WILDCARD EXPANSION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_expand_simple_path() {
+        let json = serde_json::json!({
+            "metadata": {
+                "name": "test-pod"
+            }
+        });
+
+        let components = vec![
+            PathComponent::Field("metadata".to_string()),
+            PathComponent::Field("name".to_string()),
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], &serde_json::json!("test-pod"));
+    }
+
+    #[test]
+    fn test_expand_wildcard_array() {
+        let json = serde_json::json!({
+            "spec": {
+                "containers": [
+                    {"name": "app", "image": "nginx:1.19"},
+                    {"name": "sidecar", "image": "envoy:1.20"}
+                ]
+            }
+        });
+
+        let components = vec![
+            PathComponent::Field("spec".to_string()),
+            PathComponent::Field("containers".to_string()),
+            PathComponent::Wildcard,
+            PathComponent::Field("image".to_string()),
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], &serde_json::json!("nginx:1.19"));
+        assert_eq!(results[1], &serde_json::json!("envoy:1.20"));
+    }
+
+    #[test]
+    fn test_expand_index_path() {
+        let json = serde_json::json!({
+            "items": ["first", "second", "third"]
+        });
+
+        let components = vec![
+            PathComponent::Field("items".to_string()),
+            PathComponent::Index(1),
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], &serde_json::json!("second"));
+    }
+
+    #[test]
+    fn test_expand_nested_wildcard() {
+        let json = serde_json::json!({
+            "spec": {
+                "containers": [
+                    {
+                        "name": "app",
+                        "ports": [
+                            {"containerPort": 8080},
+                            {"containerPort": 8443}
+                        ]
+                    },
+                    {
+                        "name": "sidecar",
+                        "ports": [
+                            {"containerPort": 9090}
+                        ]
+                    }
+                ]
+            }
+        });
+
+        // spec.containers.*.ports.*.containerPort
+        let components = vec![
+            PathComponent::Field("spec".to_string()),
+            PathComponent::Field("containers".to_string()),
+            PathComponent::Wildcard,
+            PathComponent::Field("ports".to_string()),
+            PathComponent::Wildcard,
+            PathComponent::Field("containerPort".to_string()),
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], &serde_json::json!(8080));
+        assert_eq!(results[1], &serde_json::json!(8443));
+        assert_eq!(results[2], &serde_json::json!(9090));
+    }
+
+    #[test]
+    fn test_expand_missing_path() {
+        let json = serde_json::json!({
+            "metadata": {
+                "name": "test"
+            }
+        });
+
+        let components = vec![
+            PathComponent::Field("spec".to_string()),
+            PathComponent::Field("missing".to_string()),
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_expand_wildcard_on_object() {
+        let json = serde_json::json!({
+            "labels": {
+                "app": "nginx",
+                "env": "prod",
+                "version": "1.0"
+            }
+        });
+
+        // labels.* - should return all label values
+        let components = vec![
+            PathComponent::Field("labels".to_string()),
+            PathComponent::Wildcard,
+        ];
+
+        let results = expand_wildcard_path(&json, &components);
+        assert_eq!(results.len(), 3);
+        // Note: object iteration order may vary, so just check count
     }
 }

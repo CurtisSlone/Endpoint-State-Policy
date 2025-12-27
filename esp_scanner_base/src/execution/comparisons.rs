@@ -725,14 +725,17 @@ impl ComparisonExt for ResolvedValue {
         other: &ResolvedValue,
         operation: Operation,
     ) -> Result<bool, ComparisonError> {
+        // FIXED: self is actual (collected data), other is expected (policy value)
         match (self, other) {
             // String comparison
-            (ResolvedValue::String(expected), ResolvedValue::String(actual)) => {
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::String(actual), ResolvedValue::String(expected)) => {
                 string::compare(actual, expected, operation)
             }
 
             // Integer comparison
-            (ResolvedValue::Integer(expected), ResolvedValue::Integer(actual)) => match operation {
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::Integer(actual), ResolvedValue::Integer(expected)) => match operation {
                 Operation::Equals => Ok(actual == expected),
                 Operation::NotEqual => Ok(actual != expected),
                 Operation::GreaterThan => Ok(actual > expected),
@@ -746,7 +749,8 @@ impl ComparisonExt for ResolvedValue {
             },
 
             // Float comparison
-            (ResolvedValue::Float(expected), ResolvedValue::Float(actual)) => match operation {
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::Float(actual), ResolvedValue::Float(expected)) => match operation {
                 Operation::Equals => Ok((actual - expected).abs() < f64::EPSILON),
                 Operation::NotEqual => Ok((actual - expected).abs() >= f64::EPSILON),
                 Operation::GreaterThan => Ok(actual > expected),
@@ -760,7 +764,8 @@ impl ComparisonExt for ResolvedValue {
             },
 
             // Boolean comparison
-            (ResolvedValue::Boolean(expected), ResolvedValue::Boolean(actual)) => match operation {
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::Boolean(actual), ResolvedValue::Boolean(expected)) => match operation {
                 Operation::Equals => Ok(actual == expected),
                 Operation::NotEqual => Ok(actual != expected),
                 _ => Err(ComparisonError::UnsupportedOperation {
@@ -770,18 +775,21 @@ impl ComparisonExt for ResolvedValue {
             },
 
             // Binary comparison
-            (ResolvedValue::Binary(expected), ResolvedValue::Binary(actual)) => {
-                binary::compare(expected, actual, operation)
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::Binary(actual), ResolvedValue::Binary(expected)) => {
+                binary::compare(actual, expected, operation)
             }
 
             // EVR string comparison
-            (ResolvedValue::EvrString(left), ResolvedValue::EvrString(right)) => {
-                evr::compare(right, left, operation)
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::EvrString(actual), ResolvedValue::EvrString(expected)) => {
+                evr::compare(actual, expected, operation)
             }
 
             // Collection comparison
-            (ResolvedValue::Collection(left), ResolvedValue::Collection(right)) => {
-                collection::compare(left, right, operation)
+            // self = actual (collected), other = expected (policy)
+            (ResolvedValue::Collection(actual), ResolvedValue::Collection(expected)) => {
+                collection::compare(actual, expected, operation)
             }
 
             // Type mismatch

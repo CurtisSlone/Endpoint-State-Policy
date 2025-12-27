@@ -9,24 +9,31 @@ use crate::grammar::keywords::Keyword;
 use crate::tokens::Token;
 
 /// Parse field_path ::= path_component ("." path_component)*
-/// where path_component ::= identifier | wildcard ("*")
+/// where path_component ::= identifier | wildcard ("*") | index (integer)
+///
+/// FIXED: Now supports numeric indices like spec.containers.0.name
 pub fn parse_field_path(parser: &mut dyn Parser) -> Result<FieldPath, String> {
     let mut components = Vec::new();
 
-    // Parse first component (required) - can be identifier or wildcard
+    // Parse first component (required) - can be identifier, wildcard, or integer index
     let first_component = match parser.current_token() {
         Some(Token::Multiply) => {
             parser.advance();
             "*".to_string()
         }
         Some(Token::Identifier(_)) => parser.expect_identifier()?,
+        Some(Token::Integer(n)) => {
+            let idx = (*n).to_string();
+            parser.advance();
+            idx
+        }
         Some(token) => {
             return Err(format!(
-                "Expected identifier or '*' in field path, found {:?}",
+                "Expected identifier, '*', or index in field path, found {:?}",
                 token
             ))
         }
-        None => return Err("Expected identifier or '*', reached end of input".to_string()),
+        None => return Err("Expected identifier, '*', or index, reached end of input".to_string()),
     };
     components.push(first_component);
 
@@ -40,14 +47,22 @@ pub fn parse_field_path(parser: &mut dyn Parser) -> Result<FieldPath, String> {
                 "*".to_string()
             }
             Some(Token::Identifier(_)) => parser.expect_identifier()?,
+            Some(Token::Integer(n)) => {
+                let idx = (*n).to_string();
+                parser.advance();
+                idx
+            }
             Some(token) => {
                 return Err(format!(
-                    "Expected identifier or '*' after dot in field path, found {:?}",
+                    "Expected identifier, '*', or index after dot in field path, found {:?}",
                     token
                 ))
             }
             None => {
-                return Err("Expected identifier or '*' after dot, reached end of input".to_string())
+                return Err(
+                    "Expected identifier, '*', or index after dot, reached end of input"
+                        .to_string(),
+                )
             }
         };
         components.push(component);
