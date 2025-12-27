@@ -562,10 +562,21 @@ contract.add_supported_behavior(SupportedBehavior {
 OBJECT config_dir
     path `/etc/myapp/`
 
-    BEHAVIOR recursive_scan
-        max_depth 5
-        include_hidden
-    BEHAVIOR_END
+    behavior recursive_scan max_depth 5 include_hidden
+
+OBJECT_END
+```
+
+**Alternative ESP Usage:**
+
+```esp
+OBJECT config_dir
+    path `/etc/myapp/`
+
+    behavior recursive_scan
+    behavior max_depth 5
+    behavior include_hidden
+
 OBJECT_END
 ```
 
@@ -1183,3 +1194,4 @@ Licensed under workspace license terms.
 **Last Updated:** November 5, 2025
 **Maintainer:** ESP Team
 **Status:** Production Ready
+

@@ -55,7 +55,7 @@ Examples of unacceptable behavior include:
 
 **Never report security vulnerabilities through public channels.**
 
-- **Report to**: <security@scanset.io>
+- **Report to**: <curtis@scanset.io>
 - **Process**: Follow responsible disclosure in SECURITY.md
 - **Response time**: We respond within 48 hours
 - **Coordination**: We will work with you on disclosure timeline
@@ -64,8 +64,8 @@ Examples of unacceptable behavior include:
 
 Report violations of this code of conduct to:
 
-- **Primary contact**: <conduct@scanset.io>
-- **Secondary contact**: <security-team@scanset.io> (for security-related violations)
+- **Primary contact**: <curtis@scanset.io>
+- **Secondary contact**: <curtis@scanset.io> (for security-related violations)
 
 ## Our Responsibilities
 
@@ -148,7 +148,7 @@ This Code of Conduct is enforced by the project maintainers and security team.
 
 ### How to Report
 
-1. **Email**: <conduct@scanset.io>
+1. **Email**: <curtis@scanset.io>
 2. **Include**: Detailed description, evidence, and desired resolution
 3. **Confidentiality**: All reports are handled confidentially
 4. **Response**: You will receive acknowledgment within 24 hours
@@ -176,8 +176,8 @@ We strive to maintain a security culture that:
 If you have questions about this Code of Conduct:
 
 - **General questions**: Create a GitHub discussion
-- **Security-related questions**: <security@scanset.io>
-- **Enforcement questions**: <conduct@scanset.io>
+- **Security-related questions**: <curtis@scanset.io>
+- **Enforcement questions**: <curtis@scanset.io>
 
 ---
 
